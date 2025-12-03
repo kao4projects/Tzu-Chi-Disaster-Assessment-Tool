@@ -2,16 +2,42 @@ import streamlit as st
 import google.generativeai as genai
 import json
 import pandas as pd
-
-# --- VERSION DEBUGGING (Top of App) ---
-# This will verify exactly what version Streamlit is using.
 import importlib.metadata
-try:
-    lib_version = importlib.metadata.version("google-generativeai")
-except:
-    lib_version = "Unknown"
 
-# --- 1. CONFIGURATION & SCORING FRAMEWORK ---
+# --- 1. CRITICAL VERSION CHECK ---
+try:
+    # Get the installed version of the library
+    lib_version = importlib.metadata.version("google-generativeai")
+except importlib.metadata.PackageNotFoundError:
+    lib_version = "Not Found"
+
+# --- 2. CONFIGURATION ---
+st.set_page_config(page_title="Tzu Chi Disaster Tool", layout="wide")
+st.title("Tzu Chi Global Disaster Assessment Tool")
+
+# Display Version for Debugging
+st.caption(f"Server Library Version: {lib_version}")
+
+# FORCE STOP if version is too old
+# We need at least 0.8.3 for the 'Tool' class
+try:
+    from google.generativeai.types import Tool, GoogleSearchRetrieval
+except ImportError:
+    st.error(f"""
+    🚨 **CRITICAL ERROR: OLD LIBRARY VERSION DETECTED** 🚨
+    
+    Your app is running `google-generativeai` version **{lib_version}**.
+    It needs **0.8.3** or higher to use Google Search.
+    
+    **HOW TO FIX:**
+    1. Go to your GitHub repository.
+    2. Open `requirements.txt`.
+    3. Make a trivial change (e.g., add a blank line at the end) and Commit.
+    4. Go to Streamlit Cloud -> Manage App -> **Reboot App**.
+    """)
+    st.stop()
+
+# --- 3. SCORING FRAMEWORK ---
 SCORING_FRAMEWORK = {
     "1. IMPACT": {
         "1.1 People Affected": 0.25,
@@ -50,7 +76,6 @@ for cat, indicators in SCORING_FRAMEWORK.items():
     for name, weight in indicators.items():
         FLAT_WEIGHTS[name] = weight
 
-# --- 2. SYSTEM PROMPT ---
 SYSTEM_PROMPT = """
 You are the assessment engine for the 'Tzu Chi Global Disaster Assessment Tool'.
 Your goal is to research a humanitarian disaster and output structured JSON data based on the user's input.
@@ -106,8 +131,6 @@ Return ONLY valid JSON with this structure (no markdown formatting):
 }
 """
 
-# --- 3. HELPER FUNCTIONS ---
-
 def calculate_final_metrics(scores_dict):
     raw_weighted_sum = 0.0
     for indicator, weight in FLAT_WEIGHTS.items():
@@ -144,36 +167,25 @@ def calculate_final_metrics(scores_dict):
     }
 
 def fetch_ai_assessment(api_key, query):
-    """Calls Gemini API with Google Search Grounding."""
     try:
         genai.configure(api_key=api_key)
         
-        # 1. MODEL NAME FIX: 
-        # Using "gemini-1.5-flash" which is the current stable standard.
-        # "2.5" does not exist and will cause 404.
+        # Use gemini-1.5-flash (Standard)
         model = genai.GenerativeModel("gemini-1.5-flash")
         
-        # 2. BULLETPROOF TOOL DEFINITION:
-        # This works on BOTH old and new versions of the library.
-        # It tries the new way first, and falls back to the old way if it fails.
-        try:
-            from google.generativeai.types import Tool, GoogleSearchRetrieval
-            search_tool = Tool(
-                google_search_retrieval=GoogleSearchRetrieval(
-                    dynamic_retrieval_config=None 
-                )
+        # This will ONLY work if version >= 0.8.3
+        # We removed the broken fallback to prevent confusing API errors.
+        search_tool = Tool(
+            google_search_retrieval=GoogleSearchRetrieval(
+                dynamic_retrieval_config=None 
             )
-            tools_payload = [search_tool]
-        except ImportError:
-            # Fallback for older libraries (0.5.x)
-            tools_payload = [{'google_search': {}}]
-
+        )
+        
         full_prompt = f"{SYSTEM_PROMPT}\n\nUSER QUERY: {query}"
         
-        # 3. GENERATION
         response = model.generate_content(
             full_prompt,
-            tools=tools_payload
+            tools=[search_tool]
         )
         
         text = response.text.replace("```json", "").replace("```", "").strip()
@@ -183,18 +195,12 @@ def fetch_ai_assessment(api_key, query):
         st.error(f"Error details: {e}")
         return None
 
-# --- 4. STREAMLIT UI ---
+# --- UI LOGIC ---
 
-st.set_page_config(page_title="Tzu Chi Disaster Tool", layout="wide")
-
-st.title("Tzu Chi Global Disaster Assessment Tool")
-st.caption(f"Server Library Version: google-generativeai=={lib_version}")
-
-# --- API KEY CHECK ---
 if "GOOGLE_API_KEY" in st.secrets:
     api_key = st.secrets["GOOGLE_API_KEY"]
 else:
-    st.error("Missing GOOGLE_API_KEY in Streamlit Secrets. Please add it in Settings > Secrets.")
+    st.error("Missing GOOGLE_API_KEY in Streamlit Secrets.")
     st.stop()
 
 query = st.text_area("Describe the disaster (Location, Date, Type):", 
@@ -214,7 +220,6 @@ if run_btn and query:
             for key, val in data["scores"].items():
                 st.session_state.current_scores[key] = val["score"]
 
-# --- 5. RESULTS DISPLAY ---
 if st.session_state.assessment_data:
     data = st.session_state.assessment_data
     
