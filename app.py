@@ -9,7 +9,7 @@ import datetime
 
 # --- 1. CONFIGURATION ---
 st.set_page_config(page_title="Tzu Chi Disaster Tool", layout="wide")
-st.title("Tzu Chi Global Disaster Assessment Tool (v13: Debug & Fix)")
+st.title("Tzu Chi Global Disaster Assessment Tool (v14: Robust)")
 
 # --- 2. API KEY SETUP ---
 if "GOOGLE_API_KEY" in st.secrets:
@@ -177,23 +177,20 @@ def calculate_final_metrics(scores_dict):
 
 def robust_json_extractor(text):
     """
-    Cleans markdown fences and extracts JSON.
+    Cleans markdown fences and extracts JSON using regex to find the outermost braces.
     """
     try:
-        # Remove markdown code blocks if present
-        text = text.replace("```json", "").replace("```", "").strip()
+        # Strip generic markdown
+        text = text.strip()
         
-        # Find the first { and last }
-        start_idx = text.find('{')
-        end_idx = text.rfind('}')
-        
-        if start_idx == -1 or end_idx == -1: 
+        # Use regex to find the JSON block { ... }
+        match = re.search(r'\{.*\}', text, re.DOTALL)
+        if match:
+            json_str = match.group(0)
+            return json.loads(json_str)
+        else:
             return None
-            
-        text_trimmed = text[start_idx : end_idx+1]
-        return json.loads(text_trimmed)
-    except Exception as e:
-        st.error(f"JSON Parsing Error: {e}")
+    except Exception:
         return None
 
 def fetch_ai_assessment(api_key, query, domains):
