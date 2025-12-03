@@ -4,40 +4,7 @@ import json
 import pandas as pd
 import importlib.metadata
 
-# --- 1. CRITICAL VERSION CHECK ---
-try:
-    # Get the installed version of the library
-    lib_version = importlib.metadata.version("google-generativeai")
-except importlib.metadata.PackageNotFoundError:
-    lib_version = "Not Found"
-
-# --- 2. CONFIGURATION ---
-st.set_page_config(page_title="Tzu Chi Disaster Tool", layout="wide")
-st.title("Tzu Chi Global Disaster Assessment Tool")
-
-# Display Version for Debugging
-st.caption(f"Server Library Version: {lib_version}")
-
-# FORCE STOP if version is too old
-# We need at least 0.8.3 for the 'Tool' class
-try:
-    from google.generativeai.types import Tool, GoogleSearchRetrieval
-except ImportError:
-    st.error(f"""
-    🚨 **CRITICAL ERROR: OLD LIBRARY VERSION DETECTED** 🚨
-    
-    Your app is running `google-generativeai` version **{lib_version}**.
-    It needs **0.8.3** or higher to use Google Search.
-    
-    **HOW TO FIX:**
-    1. Go to your GitHub repository.
-    2. Open `requirements.txt`.
-    3. Make a trivial change (e.g., add a blank line at the end) and Commit.
-    4. Go to Streamlit Cloud -> Manage App -> **Reboot App**.
-    """)
-    st.stop()
-
-# --- 3. SCORING FRAMEWORK ---
+# --- 1. CONFIGURATION & SCORING FRAMEWORK ---
 SCORING_FRAMEWORK = {
     "1. IMPACT": {
         "1.1 People Affected": 0.25,
@@ -76,6 +43,7 @@ for cat, indicators in SCORING_FRAMEWORK.items():
     for name, weight in indicators.items():
         FLAT_WEIGHTS[name] = weight
 
+# --- 2. SYSTEM PROMPT ---
 SYSTEM_PROMPT = """
 You are the assessment engine for the 'Tzu Chi Global Disaster Assessment Tool'.
 Your goal is to research a humanitarian disaster and output structured JSON data based on the user's input.
@@ -131,6 +99,8 @@ Return ONLY valid JSON with this structure (no markdown formatting):
 }
 """
 
+# --- 3. HELPER FUNCTIONS ---
+
 def calculate_final_metrics(scores_dict):
     raw_weighted_sum = 0.0
     for indicator, weight in FLAT_WEIGHTS.items():
@@ -167,123 +137,38 @@ def calculate_final_metrics(scores_dict):
     }
 
 def fetch_ai_assessment(api_key, query):
+    """Calls Gemini API with Google Search Grounding."""
     try:
         genai.configure(api_key=api_key)
         
-        # Use gemini-1.5-flash (Standard)
+        # 1. USE STABLE MODEL:
+        # We use "gemini-1.5-flash" because it is the most stable version for Search.
+        # (gemini-2.5 does not exist yet).
         model = genai.GenerativeModel("gemini-1.5-flash")
         
-        # This will ONLY work if version >= 0.8.3
-        # We removed the broken fallback to prevent confusing API errors.
-        search_tool = Tool(
-            google_search_retrieval=GoogleSearchRetrieval(
-                dynamic_retrieval_config=None 
-            )
-        )
-        
+        # 2. DICTIONARY TOOL CONFIGURATION (Version Safe):
+        # Instead of importing the 'Tool' class (which causes errors on different versions),
+        # we pass the configuration as a pure dictionary. 
+        # Note: We use "google_search_retrieval" which is the correct key for version 0.8.5+.
+        tools_payload = [
+            {'google_search_retrieval': {
+                'dynamic_retrieval_config': {
+                    'mode': 'dynamic',
+                    'dynamic_threshold': 0.7,
+                }
+            }}
+        ]
+
         full_prompt = f"{SYSTEM_PROMPT}\n\nUSER QUERY: {query}"
         
+        # 3. GENERATION
         response = model.generate_content(
             full_prompt,
-            tools=[search_tool]
+            tools=tools_payload
         )
         
         text = response.text.replace("```json", "").replace("```", "").strip()
         return json.loads(text)
         
     except Exception as e:
-        st.error(f"Error details: {e}")
-        return None
-
-# --- UI LOGIC ---
-
-if "GOOGLE_API_KEY" in st.secrets:
-    api_key = st.secrets["GOOGLE_API_KEY"]
-else:
-    st.error("Missing GOOGLE_API_KEY in Streamlit Secrets.")
-    st.stop()
-
-query = st.text_area("Describe the disaster (Location, Date, Type):", 
-                     placeholder="e.g., Floods in Southern Brazil, May 2024")
-run_btn = st.button("Run Assessment", type="primary")
-
-if "assessment_data" not in st.session_state:
-    st.session_state.assessment_data = None
-if "current_scores" not in st.session_state:
-    st.session_state.current_scores = {}
-
-if run_btn and query:
-    with st.spinner("Researching trusted sources..."):
-        data = fetch_ai_assessment(api_key, query)
-        if data:
-            st.session_state.assessment_data = data
-            for key, val in data["scores"].items():
-                st.session_state.current_scores[key] = val["score"]
-
-if st.session_state.assessment_data:
-    data = st.session_state.assessment_data
-    
-    st.divider()
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        st.header(f"{data['summary']['title']}")
-        st.markdown(f"**Location:** {data['summary']['country']} | **Date:** {data['summary']['date']}")
-        st.info(data['summary']['description'])
-        
-    with col2:
-        st.subheader("Key Figures")
-        kf = data['key_figures']
-        df_figs = pd.DataFrame([
-            ["Affected", kf.get('affected', '-')],
-            ["Fatalities", kf.get('fatalities', '-')],
-            ["Displaced", kf.get('displaced', '-')],
-            ["In Need", kf.get('in_need', '-')]
-        ], columns=["Metric", "Estimate"])
-        st.table(df_figs)
-
-    st.divider()
-    st.subheader("Indicator Scoring & Manual Override")
-    
-    tabs = st.tabs(list(SCORING_FRAMEWORK.keys()))
-    
-    for i, (dim_name, indicators) in enumerate(SCORING_FRAMEWORK.items()):
-        with tabs[i]:
-            for indicator_name, weight in indicators.items():
-                ai_score_obj = data["scores"].get(indicator_name, {"score": 3, "justification": "No data"})
-                ai_val = ai_score_obj["score"]
-                justification = ai_score_obj["justification"]
-                
-                c1, c2 = st.columns([3, 1])
-                with c1:
-                    st.markdown(f"**{indicator_name}** (Weight: {weight})")
-                    st.caption(f"AI Justification: {justification}")
-                with c2:
-                    new_val = st.slider(
-                        "Score", 
-                        1, 5, 
-                        int(st.session_state.current_scores.get(indicator_name, ai_val)),
-                        key=f"slider_{indicator_name}"
-                    )
-                    st.session_state.current_scores[indicator_name] = new_val
-
-    metrics = calculate_final_metrics(st.session_state.current_scores)
-    
-    st.divider()
-    st.header("Assessment Results")
-    
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Tzu Chi Severity Score (1-5)", f"{metrics['severity']}")
-    m2.metric("INFORM Equivalent (0-10)", f"{metrics['inform']}")
-    m3.metric("Category", f"{metrics['category']} - {metrics['cat_label']}")
-    
-    st.markdown(f"""
-    <div style="padding: 20px; border-radius: 10px; background-color: {metrics['color']}20; border: 2px solid {metrics['color']};">
-        <h3 style="color:{metrics['color']}">Recommended Action</h3>
-        <p><strong>{metrics['action']}</strong></p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    with st.expander("View Trusted Sources Used"):
-        for src in data.get("sources", []):
-            st.markdown(f"- [{src['name']}]({src['url']}) ({src['date']})")
+        st.error(f"
