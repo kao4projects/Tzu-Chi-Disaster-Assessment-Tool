@@ -9,7 +9,7 @@ import datetime
 
 # --- 1. CONFIGURATION ---
 st.set_page_config(page_title="Tzu Chi Disaster Tool", layout="wide")
-st.title("Tzu Chi Global Disaster Assessment Tool (v11: Fixed Sliders & Links)")
+st.title("Tzu Chi Global Disaster Assessment Tool (v12: Fixed Sliders & Links)")
 
 # --- 2. API KEY SETUP ---
 if "GOOGLE_API_KEY" in st.secrets:
@@ -211,7 +211,7 @@ def fetch_ai_assessment(api_key, query, domains):
 
         try:
             response = client.models.generate_content(
-                model='gemini-3-pro',
+                model='gemini-2.5-flash',
                 contents=full_prompt,
                 config=tool_config
             )
