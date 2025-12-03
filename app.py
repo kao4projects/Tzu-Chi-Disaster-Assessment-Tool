@@ -180,23 +180,76 @@ def calculate_final_metrics(scores_dict):
         "color": color
     }
 
-def robust_json_extractor(text):
+def safe_get_response_text(response):
     """
-    Cleans markdown fences and extracts JSON using regex to find the outermost braces.
+    Safely extract a string payload from GenerateContentResponse.
+
+    - Tries .output_text then .text
+    - Falls back to walking candidates/parts
+    - Never raises; returns None if no text
+    """
+    # 1) Newer SDK property
+    for attr in ("output_text", "text"):
+        if hasattr(response, attr):
+            try:
+                txt = getattr(response, attr)
+                if isinstance(txt, str) and txt.strip():
+                    return txt
+            except Exception:
+                # Some SDK versions throw when no text is present
+                pass
+
+    # 2) Fallback: look at parts
+    try:
+        for cand in getattr(response, "candidates", []) or []:
+            content = getattr(cand, "content", None)
+            if not content:
+                continue
+            for part in getattr(content, "parts", []) or []:
+                t = getattr(part, "text", None)
+                if isinstance(t, str) and t.strip():
+                    return t
+    except Exception:
+        pass
+
+    return None
+
+
+def robust_json_extractor(text: str):
+    """
+    Try to pull a JSON object out of a model response.
+
+    Works with:
+    - Raw JSON
+    - ```json ... ``` fenced blocks
+    - JSON preceded/followed by commentary
     """
     try:
-        # Strip generic markdown
-        text = text.strip()
-        
-        # Use regex to find the JSON block { ... }
-        match = re.search(r'\{.*\}', text, re.DOTALL)
-        if match:
-            json_str = match.group(0)
-            return json.loads(json_str)
-        else:
+        if not text:
             return None
+
+        text = text.strip()
+
+        # If it already looks like pure JSON object, try directly
+        if text.startswith("{") and text.endswith("}"):
+            return json.loads(text)
+
+        # Strip Markdown code fences if present
+        if "```" in text:
+            # eg ```json { ... } ```
+            inner = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.DOTALL | re.IGNORECASE)
+            if inner:
+                return json.loads(inner.group(1))
+
+        # Fallback: first {...} block in the text
+        match = re.search(r"\{.*\}", text, re.DOTALL)
+        if match:
+            return json.loads(match.group(0))
+
+        return None
     except Exception:
         return None
+
 
 def fetch_ai_assessment(api_key, query, domains):
     try:
@@ -208,50 +261,63 @@ def fetch_ai_assessment(api_key, query, domains):
             f"TARGET SOURCES: {domain_list_str}\n"
             "INSTRUCTION: Find the LATEST data. Use descriptive text to infer scores if numbers are missing."
         )
-        
+
         tool_config = types.GenerateContentConfig(
             tools=[types.Tool(google_search=types.GoogleSearch())],
-            response_mime_type="application/json"
+            # JSON mode – model should emit proper JSON, not prose
+            response_mime_type="application/json",
         )
 
+        # Try 2.0 first, fall back to 1.5
         try:
             response = client.models.generate_content(
-                model='gemini-2.0-flash',
+                model="gemini-2.0-flash",
                 contents=full_prompt,
-                config=tool_config
+                config=tool_config,
             )
         except Exception:
             response = client.models.generate_content(
-                model='gemini-1.5-flash',
+                model="gemini-1.5-flash",
                 contents=full_prompt,
-                config=tool_config
+                config=tool_config,
             )
 
-        # DEBUG: Capture Raw Response Text
-        raw_text_debug = response.text
-
-        # Robust URL Extraction
+        # --- URL extraction (more defensive) ---
         valid_urls = []
         try:
-            if (response.candidates and 
-                response.candidates[0].grounding_metadata and 
-                response.candidates[0].grounding_metadata.grounding_chunks):
-                
-                for chunk in response.candidates[0].grounding_metadata.grounding_chunks:
-                    if chunk.web and chunk.web.uri:
-                        valid_urls.append(chunk.web.uri)
-        except Exception as e:
-            pass # Silent fail usually better
+            for cand in getattr(response, "candidates", []) or []:
+                gm = getattr(cand, "grounding_metadata", None)
+                if not gm:
+                    continue
+                chunks = getattr(gm, "grounding_chunks", None)
+                if not chunks:
+                    continue
+                for chunk in chunks:
+                    web = getattr(chunk, "web", None)
+                    if web and getattr(web, "uri", None):
+                        valid_urls.append(web.uri)
+        except Exception:
+            # If grounding metadata shape changes, just skip URLs instead of failing the whole call
+            pass
 
-        if not response.text:
-            return None, valid_urls, "Empty Response"
+        # --- Safely get the raw JSON text from Gemini ---
+        raw_text_debug = safe_get_response_text(response)
+        if not raw_text_debug:
+            # Tell the UI we got a response but no text payload
+            return None, valid_urls, "Model response contained no text (possibly tool-only call)."
 
-        data = robust_json_extractor(response.text)
+        data = robust_json_extractor(raw_text_debug)
+        if data is None:
+            # Surface first part of the text to help you debug in the UI
+            snippet = raw_text_debug[:1200]
+            return None, valid_urls, f"Could not parse JSON from model.\n\nSnippet:\n{snippet}"
+
         return data, valid_urls, raw_text_debug
-        
+
     except Exception as e:
-        # Fallback empty return on API error
-        return None, [], str(e)
+        # Any unexpected error bubbles up to debugger text rather than crashing the app
+        return None, [], f"Exception in fetch_ai_assessment: {e!r}"
+
 
 # --- 7. UI RENDER ---
 
