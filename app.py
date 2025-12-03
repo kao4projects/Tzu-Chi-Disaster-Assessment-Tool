@@ -3,6 +3,7 @@ import google.generativeai as genai
 import json
 import pandas as pd
 import importlib.metadata
+from google.generativeai.types import Tool, GoogleSearchRetrieval, DynamicRetrievalConfig
 
 # --- 1. CONFIGURATION ---
 st.set_page_config(page_title="Tzu Chi Disaster Tool", layout="wide")
@@ -148,53 +149,48 @@ def calculate_final_metrics(scores_dict):
     }
 
 def fetch_ai_assessment(api_key, query):
-    """Calls Gemini API using the specific tool syntax requested by the error."""
+    """Calls Gemini API using EXPLICIT TOOL CONSTRUCTION for SDK 0.8.5+."""
     try:
         genai.configure(api_key=api_key)
         
-        # 1. MODEL SELECTION
-        # We try Gemini 2.5 Flash as requested.
-        # If it doesn't exist yet, we fall back to 1.5 Flash automatically.
-        target_model = "gemini-2.5-flash"
-        
-        # 2. TOOL CONFIGURATION
-        # The error explicitly asked for 'google_search', NOT 'google_search_retrieval'
-        # This dictionary syntax is the most robust way to pass it.
-        tools_config = [
-            {'google_search': {}} 
-        ]
+        # 1. TOOL CONSTRUCTION (SDK 0.8.5+ Compatible)
+        # This replaces the old dictionary syntax that caused the error.
+        search_tool = Tool(
+            google_search_retrieval=GoogleSearchRetrieval(
+                dynamic_retrieval_config=DynamicRetrievalConfig(
+                    mode=DynamicRetrievalConfig.Mode.DYNAMIC,
+                    dynamic_threshold=0.7,
+                )
+            )
+        )
 
-        model = genai.GenerativeModel(target_model)
-        
         full_prompt = f"{SYSTEM_PROMPT}\n\nUSER QUERY: {query}"
         
-        # 3. GENERATION
-        response = model.generate_content(
-            full_prompt,
-            tools=tools_config
-        )
+        # 2. MODEL SELECTION & FALLBACK
+        # We try Gemini 2.5 first. If it fails (404), we fallback to 1.5.
+        try:
+            model = genai.GenerativeModel("gemini-2.5-flash")
+            response = model.generate_content(
+                full_prompt,
+                tools=[search_tool]
+            )
+        except Exception as e:
+            if "404" in str(e) or "not found" in str(e).lower():
+                st.warning("Gemini 2.5 Flash not available. Falling back to Gemini 1.5 Flash.")
+                model = genai.GenerativeModel("gemini-1.5-flash")
+                response = model.generate_content(
+                    full_prompt,
+                    tools=[search_tool]
+                )
+            else:
+                raise e # Re-raise if it's not a model name error
         
         text = response.text.replace("```json", "").replace("```", "").strip()
         return json.loads(text)
         
     except Exception as e:
-        # Fallback Logic: If 2.5 doesn't exist, try 1.5
-        if "404" in str(e) and "models/" in str(e):
-            st.warning(f"Gemini 2.5 Flash not found. Falling back to Gemini 1.5 Flash...")
-            try:
-                model = genai.GenerativeModel("gemini-1.5-flash")
-                response = model.generate_content(
-                    f"{SYSTEM_PROMPT}\n\nUSER QUERY: {query}",
-                    tools=[{'google_search': {}}]
-                )
-                text = response.text.replace("```json", "").replace("```", "").strip()
-                return json.loads(text)
-            except Exception as e2:
-                st.error(f"Fallback failed: {e2}")
-                return None
-        else:
-            st.error(f"Error details: {e}")
-            return None
+        st.error(f"Error details: {e}")
+        return None
 
 # --- 6. UI RENDER ---
 
