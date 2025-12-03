@@ -217,7 +217,7 @@ def fetch_ai_assessment(api_key, query, domains):
             )
         except Exception:
             response = client.models.generate_content(
-                model='gemini-1.5-flash',
+                model='gemini-2.0-flash',
                 contents=full_prompt,
                 config=tool_config
             )
