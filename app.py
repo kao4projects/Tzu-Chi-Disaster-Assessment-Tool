@@ -207,8 +207,6 @@ You MUST use the full 1–5 range. Scores 2 and 4 are allowed when the data clea
 Map found data to these scores (1-5).
 {rubric_text}
 
-{rubric_text}
-
 ### 4. QUALITATIVE INFERENCE:
 If exact numbers are missing, score based on text severity (e.g. "Catastrophic" = 5). 
 **DO NOT DEFAULT TO 3.** If data implies severity, score high.
@@ -408,22 +406,26 @@ def fetch_ai_assessment(api_key, query, domains):
         )
 
         tool_config = types.GenerateContentConfig(
-            tools=[types.Tool(google_search=types.GoogleSearch())],
-        )
+    tools=[types.Tool(google_search=types.GoogleSearch())],
+    generation_config=types.GenerationConfig(
+        response_mime_type="application/json",
+    ),
+)
 
-        # Try 2.5 then fall back to 2.0
-        try:
-            response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=full_prompt,
-                config=tool_config,
-            )
-        except Exception:
-            response = client.models.generate_content(
-                model="gemini-2.0-flash",
-                contents=full_prompt,
-                config=tool_config,
-            )
+# Try 2.5 then fall back to 2.0
+try:
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=full_prompt,
+        config=tool_config,
+    )
+except Exception:
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=full_prompt,
+        config=tool_config,
+    )
+
 
         # ---------- Extract URLs from grounding metadata ----------
         valid_urls = []
