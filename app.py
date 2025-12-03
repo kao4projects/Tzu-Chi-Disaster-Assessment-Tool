@@ -2,10 +2,7 @@ import streamlit as st
 from google import genai
 from google.genai import types
 import json
-import pandas as pd
 import re
-import time
-import datetime
 
 # --- 1. CONFIGURATION ---
 st.set_page_config(page_title="Tzu Chi Disaster Tool", layout="wide")
@@ -24,18 +21,9 @@ with st.sidebar:
     st.caption("The AI will prioritize these sources.")
     
     DEFAULT_DOMAINS = [
-        "reliefweb.int",
-        "unocha.org",
-        "bbc.com",
-        "reuters.com",
-        "aljazeera.com",
-        "news.un.org",    
-        "cnn.com", 
-        "euronews.com",
-        "apnews.com",
-        "adaderana.lk", 
-        "dailymirror.lk", 
-        "newsfirst.lk"
+        "reliefweb.int", "unocha.org", "bbc.com", "reuters.com",
+        "aljazeera.com", "news.un.org", "cnn.com", "euronews.com",
+        "apnews.com", "adaderana.lk", "dailymirror.lk", "newsfirst.lk"
     ]
     
     selected_domains = st.multiselect(
@@ -95,7 +83,8 @@ Your task is to populate a disaster matrix with EXACT DATA and SCORING.
 
 ### 1. SEARCH & RECOVERY PROTOCOL:
 - **Primary:** Search the 'Target Sources' for real-time data.
-- **Strict Data Requirement:** You must find real-world reports. Do not simulate data. If zero information is found after a thorough search, state "No data found".
+- **Strict Data Requirement:** You must find real-world reports. Do not simulate data. 
+- **NO DATA PROTOCOL:** If zero information is found, return the JSON structure with fields set to "No data found" or "0". DO NOT return plain text.
 
 ### 2. KEY FIGURES EXTRACTION:
 Extract specific fields.
@@ -115,7 +104,7 @@ If exact numbers are missing, score based on text severity (e.g. "Catastrophic" 
 ### OUTPUT FORMAT (JSON ONLY):
 DO NOT wrap the JSON in backticks or Markdown code fences.
 DO NOT add any explanation or commentary before or after the JSON.
-Return ONLY the JSON object.
+Return ONLY the JSON object following this structure exactly:
 {{
   "summary": {{ "title": "...", "country": "...", "date": "...", "description": "..." }},
   "key_figures": {{
@@ -150,11 +139,6 @@ def calculate_final_metrics(scores_dict):
             score = scores_dict.get(ind_name, 3)
             total_weighted_sum += score * weight
             
-    # Normalize to 1-5 Scale (Assuming 5 Dimensions with weights summing to 1.0 each)
-    # Total sum will be approx 0-5 range already if weights are 0.25, 0.25 etc.
-    # Actually, let's just use the sum directly if the weights per dimension sum to 1.0
-    # and we sum across 5 dimensions, we need to divide by 5.
-    
     final_severity_index = total_weighted_sum / 5.0
     inform_score = final_severity_index * 2.0 
     
@@ -184,14 +168,7 @@ def calculate_final_metrics(scores_dict):
     }
 
 def safe_get_response_text(response):
-    """
-    Safely extract a string payload from GenerateContentResponse.
-
-    Tries several shapes to be compatible with different google-genai versions:
-    - response.output_text
-    - response.text
-    - first candidate.content.parts[i].text
-    """
+    """Safely extract a string payload from GenerateContentResponse."""
     # 1) Newer SDK property: output_text
     for attr in ("output_text", "text"):
         if hasattr(response, attr):
@@ -200,32 +177,26 @@ def safe_get_response_text(response):
                 if isinstance(txt, str) and txt.strip():
                     return txt
             except Exception:
-                # Some SDK versions throw if not present
                 pass
 
     # 2) Fallback: walk candidates/parts
     try:
         for cand in getattr(response, "candidates", []) or []:
             content = getattr(cand, "content", None)
-            if not content:
-                continue
+            if not content: continue
             for part in getattr(content, "parts", []) or []:
                 t = getattr(part, "text", None)
                 if isinstance(t, str) and t.strip():
                     return t
     except Exception:
         pass
-
     return None
 
 
 def robust_json_extractor(text: str):
     """
-    Try to pull a JSON object out of a model response.
-
-    - Handles code fences like ```json { ... } ```
-    - Ignores any extra commentary before/after the JSON
-    - Tries to salvage cases where there is trailing junk after the closing brace
+    Robustly extract JSON from model response.
+    Fixed to handle markdown fences and trailing text better than regex.
     """
     if not text:
         return None
@@ -233,42 +204,29 @@ def robust_json_extractor(text: str):
     # Normalise whitespace
     text = str(text).strip()
 
-    # Quick strip of simple fenced block: ```...```
-    if text.startswith("```") and text.endswith("```"):
-        # Remove leading/trailing backticks and spaces
-        text = text.strip("`").strip()
+    # Find the FIRST opening brace and the LAST closing brace
+    # This ignores any preamble text or trailing explanations/sources
+    start_idx = text.find("{")
+    end_idx = text.rfind("}")
 
-    # Find the first {...} block in the text (greedy to catch the outermost one)
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if not match:
+    if start_idx == -1 or end_idx == -1:
         return None
 
-    candidate = match.group(0)
+    # Extract the substring that is likely JSON
+    candidate = text[start_idx : end_idx + 1]
 
-    # First attempt: direct parse
+    # Attempt parse
     try:
         return json.loads(candidate)
-    except Exception:
-        pass  # we'll try to salvage below
-
-    # ---- Salvage mode ----
-    # Sometimes the model appends a note or extra characters after the root object.
-    # We repeatedly trim characters after the last '}' and retry a few times.
-    s = candidate
-    for _ in range(10):
-        last = s.rfind("}")
-        if last <= 0:
-            break
-        s = s[: last + 1]  # keep up to and including this brace
+    except json.JSONDecodeError:
+        # Fallback: Sometimes models use single quotes or Python syntax
+        # We can try a simple replace, though risky, it salvages some errors
         try:
-            return json.loads(s)
+            return json.loads(candidate.replace("'", '"').replace("None", "null").replace("True", "true").replace("False", "false"))
         except Exception:
-            continue
+            pass
 
-    # If we still couldn't parse, give up.
     return None
-
-
 
 def fetch_ai_assessment(api_key, query, domains):
     try:
@@ -284,52 +242,46 @@ def fetch_ai_assessment(api_key, query, domains):
 
         tool_config = types.GenerateContentConfig(
             tools=[types.Tool(google_search=types.GoogleSearch())],
-            # Ask Gemini to respond with JSON
             response_mime_type="application/json",
         )
 
-        # Try Gemini 2.0 first, then fall back to 1.5 if needed
         try:
-            response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=full_prompt,
-                config=tool_config,
-            )
-        except Exception:
             response = client.models.generate_content(
                 model="gemini-2.0-flash",
                 contents=full_prompt,
                 config=tool_config,
             )
+        except Exception:
+            # Fallback to older model if 2.0 not available
+            response = client.models.generate_content(
+                model="gemini-1.5-flash",
+                contents=full_prompt,
+                config=tool_config,
+            )
 
-        # ---------- Extract URLs from grounding metadata (defensive) ----------
+        # ---------- Extract URLs (Defensive) ----------
         valid_urls = []
         try:
             for cand in getattr(response, "candidates", []) or []:
                 gm = getattr(cand, "grounding_metadata", None)
-                if not gm:
-                    continue
+                if not gm: continue
                 chunks = getattr(gm, "grounding_chunks", None)
-                if not chunks:
-                    continue
+                if not chunks: continue
                 for chunk in chunks:
                     web = getattr(chunk, "web", None)
                     if web and getattr(web, "uri", None):
                         valid_urls.append(web.uri)
         except Exception:
-            # If the structure changes, we just skip URLs – don't fail the whole call
             pass
 
-        # ---------- Safely get raw text from the response ----------
+        # ---------- Get Text ----------
         raw_text_debug = safe_get_response_text(response)
         if not raw_text_debug:
-            # This is what will show in the Debugger expander
             return None, valid_urls, "Model response contained no text (possibly tool-only call)."
 
         # ---------- Parse JSON ----------
         data = robust_json_extractor(raw_text_debug)
         if data is None:
-            # Surface the first chunk of text so you can see what Gemini actually returned
             snippet = raw_text_debug[:1200]
             debug_msg = (
                 "Could not parse JSON from model. "
@@ -338,14 +290,10 @@ def fetch_ai_assessment(api_key, query, domains):
             )
             return None, valid_urls, debug_msg
 
-        # Success
         return data, valid_urls, raw_text_debug
 
     except Exception as e:
-        # Any unexpected error returns a debug string instead of crashing the app
         return None, [], f"Exception in fetch_ai_assessment: {e!r}"
-
-
 
 # --- 7. UI RENDER ---
 
@@ -366,11 +314,9 @@ if run_btn and query:
     with st.spinner("🔍 Researching Sources & Scoring against Rubric..."):
         data, urls, raw_debug = fetch_ai_assessment(api_key, query, selected_domains)
 
-        # Always keep what came back for debugging
         st.session_state.raw_debug = raw_debug
         st.session_state.valid_urls = urls or []
 
-        # IMPORTANT: check for None, not truthiness
         if data is not None:
             st.session_state.assessment_data = data
 
@@ -386,19 +332,15 @@ if run_btn and query:
                         score_val = int(re.search(r'\d+', val_str).group())
                         st.session_state.current_scores[matched_key] = score_val
                     except Exception:
-                        # keep default if parsing fails
                         pass
         else:
             st.error("Failed to retrieve data. See reason below in the Debugger.")
-            # Show the raw_debug immediately so you don’t have to hunt for it
             if raw_debug:
                 st.code(str(raw_debug), language="text")
-
 
 if st.session_state.assessment_data:
     data = st.session_state.assessment_data
     
-    # --- HEADER ---
     st.divider()
     col1, col2 = st.columns([2, 1])
     with col1:
@@ -406,7 +348,6 @@ if st.session_state.assessment_data:
         st.caption(f"📍 {data.get('summary', {}).get('country', '-')} | 📅 {data.get('summary', {}).get('date', '-')}")
         st.info(data.get('summary', {}).get('description', 'No description available.'))
         
-    # --- KEY FIGURES ---
     with col2:
         st.subheader("Key Figures")
         kf = data.get('key_figures', {})
@@ -418,7 +359,6 @@ if st.session_state.assessment_data:
             src = kf_item.get('source', 'Unknown')
             url = kf_item.get('url', '#')
             
-            # Use valid_urls fallback if AI url is empty/broken
             if (not url or url == "#" or "..." in url) and st.session_state.valid_urls:
                 url = st.session_state.valid_urls[0]
 
@@ -441,7 +381,6 @@ if st.session_state.assessment_data:
             render_kf_card("Fatalities", kf.get('fatalities', {}))
             render_kf_card("In Need", kf.get('in_need', {}))
 
-    # --- SCORES ---
     st.divider()
     st.subheader("Detailed Assessment & Evidence")
     
@@ -450,7 +389,6 @@ if st.session_state.assessment_data:
     for i, (dim_name, indicators) in enumerate(SCORING_FRAMEWORK.items()):
         with tabs[i]:
             for indicator_name, details in indicators.items():
-                # Fuzzy match to get data from AI response
                 ai_data = {}
                 for k, v in data.get("scores", {}).items():
                     if match_score_key(k, [indicator_name]) == indicator_name:
@@ -474,15 +412,11 @@ if st.session_state.assessment_data:
                     with c2:
                         st.markdown(f"**Evidence:** `{ai_value}`")
                         st.write(f"_{ai_just}_")
-                        
-                        # Display valid URLs from session state if AI ones are generic
                         if st.session_state.valid_urls:
                             unique_urls = list(set(st.session_state.valid_urls))[:3]
                             links = " | ".join([f"[Source {j+1}]({u})" for j, u in enumerate(unique_urls)])
                             st.markdown(f"🔗 {links}")
-                            
                     with c3:
-                        # Use the session state value which was updated in the button callback
                         current_val = st.session_state.current_scores.get(indicator_name, ai_score)
                         new_val = st.slider(
                             "Score", 1, 5, int(current_val),
@@ -492,7 +426,6 @@ if st.session_state.assessment_data:
                         st.session_state.current_scores[indicator_name] = new_val
                     st.divider()
 
-    # --- RESULTS ---
     metrics = calculate_final_metrics(st.session_state.current_scores)
     st.header("Final Assessment")
     m1, m2, m3 = st.columns(3)
@@ -507,13 +440,8 @@ if st.session_state.assessment_data:
     </div>
     """, unsafe_allow_html=True)
     
-    # --- DEEP DEBUGGER ---
-    with st.expander("🛠️ Developer Debugger (Click if Data is Missing)"):
-        st.write("### 1. Extracted URLs (Grounding Metadata)")
-        if st.session_state.valid_urls:
-            st.write(st.session_state.valid_urls)
-        else:
-            st.warning("No URLs found in grounding metadata.")
-            
-        st.write("### 2. Raw JSON Response from AI")
+    with st.expander("🛠️ Developer Debugger"):
+        st.write("### 1. Extracted URLs")
+        st.write(st.session_state.valid_urls)
+        st.write("### 2. Raw JSON Response")
         st.code(st.session_state.raw_debug, language='json')
