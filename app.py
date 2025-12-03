@@ -95,7 +95,7 @@ Extract these specific fields. Use "Unknown" if no data exists.
 - **Value:** The number (e.g. "1,200").
 - **Date:** The date of report (e.g. "2025-12-02").
 - **Source:** The publisher (e.g. "Reuters").
-- **Url:** The direct link.
+- **Url:** The direct link to the citation.
 
 ### 2. SCORING RUBRIC (STRICT):
 Map found data to these scores (1-5).
