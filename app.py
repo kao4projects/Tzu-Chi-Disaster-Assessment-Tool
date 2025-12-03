@@ -9,7 +9,7 @@ import datetime
 
 # --- 1. CONFIGURATION ---
 st.set_page_config(page_title="Tzu Chi Disaster Tool", layout="wide")
-st.title("Tzu Chi Global Disaster Assessment Tool (v12: Fixed Sliders & Links)")
+st.title("Tzu Chi Global Disaster Assessment Tool (v13: Debug & Fix)")
 
 # --- 2. API KEY SETUP ---
 if "GOOGLE_API_KEY" in st.secrets:
@@ -32,7 +32,10 @@ with st.sidebar:
         "news.un.org",    
         "cnn.com", 
         "euronews.com",
-        "apnews.com"
+        "apnews.com",
+        "adaderana.lk", 
+        "dailymirror.lk", 
+        "newsfirst.lk"
     ]
     
     selected_domains = st.multiselect(
@@ -90,18 +93,22 @@ SYSTEM_PROMPT = f"""
 You are the Lead Researcher for the 'Tzu Chi Disaster Assessment Unit'.
 Your task is to populate a disaster matrix with EXACT DATA and SCORING.
 
-### 1. KEY FIGURES EXTRACTION:
-Extract these specific fields. Use "Unknown" if no data exists.
+### 1. SEARCH & RECOVERY PROTOCOL:
+- **Primary:** Search the 'Target Sources' for real-time data.
+- **Secondary (Simulation Fallback):** If the search returns 0 results (e.g., future date scenario like 2025), **DO NOT RETURN "UNKNOWN"**. You MUST generate a realistic *Estimated Scenario* based on the disaster type and location history. Label sources as "Simulation Estimate".
+
+### 2. KEY FIGURES EXTRACTION:
+Extract specific fields.
 - **Value:** The number (e.g. "1,200").
 - **Date:** The date of report (e.g. "2025-12-02").
 - **Source:** The publisher (e.g. "Reuters").
-- **Url:** The direct link to the citation.
+- **Url:** The direct link.
 
-### 2. SCORING RUBRIC (STRICT):
+### 3. SCORING RUBRIC (STRICT):
 Map found data to these scores (1-5).
 {rubric_text}
 
-### 3. QUALITATIVE INFERENCE:
+### 4. QUALITATIVE INFERENCE:
 If exact numbers are missing, score based on text severity (e.g. "Catastrophic" = 5). 
 **DO NOT DEFAULT TO 3.** If data implies severity, score high.
 
@@ -124,26 +131,12 @@ If exact numbers are missing, score based on text severity (e.g. "Catastrophic" 
 # --- 6. HELPER FUNCTIONS ---
 
 def match_score_key(ai_key, framework_keys):
-    """
-    Fuzzy matcher to map AI's JSON keys (which might be imperfect)
-    to the official Framework keys.
-    """
     ai_key_clean = ai_key.lower().replace(".", "").strip()
-    
-    # 1. Exact match
-    if ai_key in framework_keys:
-        return ai_key
-        
-    # 2. Substring match (e.g. "1.1" matches "1.1 People Affected")
+    if ai_key in framework_keys: return ai_key
     for fk in framework_keys:
-        if ai_key_clean in fk.lower().replace(".", ""):
-            return fk
-            
-    # 3. Text match (e.g. "People Affected" matches "1.1 People Affected")
+        if ai_key_clean in fk.lower().replace(".", ""): return fk
     for fk in framework_keys:
-        if ai_key.lower() in fk.lower():
-            return fk
-            
+        if ai_key.lower() in fk.lower(): return fk
     return None
 
 def calculate_final_metrics(scores_dict):
@@ -183,14 +176,24 @@ def calculate_final_metrics(scores_dict):
     }
 
 def robust_json_extractor(text):
+    """
+    Cleans markdown fences and extracts JSON.
+    """
     try:
+        # Remove markdown code blocks if present
+        text = text.replace("```json", "").replace("```", "").strip()
+        
+        # Find the first { and last }
         start_idx = text.find('{')
         end_idx = text.rfind('}')
-        if start_idx == -1 or end_idx == -1: return None
+        
+        if start_idx == -1 or end_idx == -1: 
+            return None
+            
         text_trimmed = text[start_idx : end_idx+1]
-        obj, _ = json.JSONDecoder().raw_decode(text_trimmed)
-        return obj
-    except Exception:
+        return json.loads(text_trimmed)
+    except Exception as e:
+        st.error(f"JSON Parsing Error: {e}")
         return None
 
 def fetch_ai_assessment(api_key, query, domains):
@@ -211,37 +214,43 @@ def fetch_ai_assessment(api_key, query, domains):
 
         try:
             response = client.models.generate_content(
-                model='gemini-2.5-flash',
+                model='gemini-2.0-flash',
                 contents=full_prompt,
                 config=tool_config
             )
         except Exception:
             response = client.models.generate_content(
-                model='gemini-2.0-flash',
+                model='gemini-1.5-flash',
                 contents=full_prompt,
                 config=tool_config
             )
 
-        # Robust URL Extraction from Grounding Metadata
-        # This fixes the "Broken Link" issue by getting real URLs from the search engine
+        # DEBUG: Capture Raw Response Text
+        raw_text_debug = response.text
+
+        # Robust URL Extraction
         valid_urls = []
         try:
-            if response.candidates[0].grounding_metadata.grounding_chunks:
+            if (response.candidates and 
+                response.candidates[0].grounding_metadata and 
+                response.candidates[0].grounding_metadata.grounding_chunks):
+                
                 for chunk in response.candidates[0].grounding_metadata.grounding_chunks:
                     if chunk.web and chunk.web.uri:
                         valid_urls.append(chunk.web.uri)
-        except:
+        except Exception as e:
+            # st.write(f"Metadata extract error: {e}") # Silent fail usually better
             pass
 
         if not response.text:
-            return None, valid_urls
+            return None, valid_urls, "Empty Response"
 
         data = robust_json_extractor(response.text)
-        return data, valid_urls
+        return data, valid_urls, raw_text_debug
         
     except Exception as e:
         st.error(f"API Error details: {e}")
-        return None, []
+        return None, [], str(e)
 
 # --- 7. UI RENDER ---
 
@@ -255,17 +264,19 @@ if "valid_urls" not in st.session_state:
     st.session_state.valid_urls = []
 if "current_scores" not in st.session_state:
     st.session_state.current_scores = {}
+if "raw_debug" not in st.session_state:
+    st.session_state.raw_debug = ""
 
 if run_btn and query:
     with st.spinner("🔍 Researching Sources & Scoring against Rubric..."):
-        data, urls = fetch_ai_assessment(api_key, query, selected_domains)
+        data, urls, raw_debug = fetch_ai_assessment(api_key, query, selected_domains)
+        
+        st.session_state.raw_debug = raw_debug # Store raw text for debugging
         
         if data:
             st.session_state.assessment_data = data
             st.session_state.valid_urls = urls
             
-            # --- CRITICAL FIX: MAP AI KEYS TO FRAMEWORK KEYS ---
-            # This ensures the slider gets the AI's value, not default 3
             framework_keys = []
             for d in SCORING_FRAMEWORK.values():
                 framework_keys.extend(d.keys())
@@ -273,11 +284,13 @@ if run_btn and query:
             for ai_key, ai_val_obj in data.get("scores", {}).items():
                 matched_key = match_score_key(ai_key, framework_keys)
                 if matched_key:
-                    # Extract score, ensure it's int
-                    score_val = int(ai_val_obj.get("score", 3))
-                    st.session_state.current_scores[matched_key] = score_val
+                    try:
+                        score_val = int(ai_val_obj.get("score", 3))
+                        st.session_state.current_scores[matched_key] = score_val
+                    except:
+                        pass # Keep default if parsing fails
         else:
-            st.error("Failed to retrieve data.")
+            st.error("Failed to retrieve data. Check Debugger below.")
 
 if st.session_state.assessment_data:
     data = st.session_state.assessment_data
@@ -286,9 +299,9 @@ if st.session_state.assessment_data:
     st.divider()
     col1, col2 = st.columns([2, 1])
     with col1:
-        st.title(f"{data['summary']['title']}")
-        st.caption(f"📍 {data['summary']['country']} | 📅 {data['summary']['date']}")
-        st.info(data['summary']['description'])
+        st.title(f"{data.get('summary', {}).get('title', 'Assessment')}")
+        st.caption(f"📍 {data.get('summary', {}).get('country', '-')} | 📅 {data.get('summary', {}).get('date', '-')}")
+        st.info(data.get('summary', {}).get('description', 'No description available.'))
         
     # --- KEY FIGURES ---
     with col2:
@@ -296,6 +309,7 @@ if st.session_state.assessment_data:
         kf = data.get('key_figures', {})
         
         def render_kf_card(label, kf_item):
+            if not kf_item: kf_item = {}
             val = kf_item.get('value', 'Unknown')
             date = kf_item.get('date', '-')
             src = kf_item.get('source', 'Unknown')
@@ -335,7 +349,7 @@ if st.session_state.assessment_data:
             for indicator_name, details in indicators.items():
                 # Fuzzy match to get data from AI response
                 ai_data = {}
-                for k, v in data["scores"].items():
+                for k, v in data.get("scores", {}).items():
                     if match_score_key(k, [indicator_name]) == indicator_name:
                         ai_data = v
                         break
@@ -360,13 +374,11 @@ if st.session_state.assessment_data:
                         
                         # Display valid URLs from session state if AI ones are generic
                         if st.session_state.valid_urls:
-                            # Show top 3 unique URLs as sources
                             unique_urls = list(set(st.session_state.valid_urls))[:3]
                             links = " | ".join([f"[Source {j+1}]({u})" for j, u in enumerate(unique_urls)])
                             st.markdown(f"🔗 {links}")
                             
                     with c3:
-                        # Use the session state value which was updated in the button callback
                         current_val = st.session_state.current_scores.get(indicator_name, ai_score)
                         new_val = st.slider(
                             "Score", 1, 5, int(current_val),
@@ -390,3 +402,14 @@ if st.session_state.assessment_data:
         <p style="font-size: 1.2em; margin-top: 10px;"><strong>ACTION: {metrics['action']}</strong></p>
     </div>
     """, unsafe_allow_html=True)
+    
+    # --- DEEP DEBUGGER ---
+    with st.expander("🛠️ Developer Debugger (Click if Data is Missing)"):
+        st.write("### 1. Extracted URLs (Grounding Metadata)")
+        if st.session_state.valid_urls:
+            st.write(st.session_state.valid_urls)
+        else:
+            st.warning("No URLs found in grounding metadata.")
+            
+        st.write("### 2. Raw JSON Response from AI")
+        st.code(st.session_state.raw_debug, language='json')
