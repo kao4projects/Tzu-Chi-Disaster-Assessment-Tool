@@ -163,7 +163,7 @@ def fetch_ai_assessment(api_key, query):
         
         # 1. Use the correct model name (Likely 1.5-flash or 2.0-flash-exp)
         # We use 'gemini-1.5-flash-002' as it is the stable production version.
-        model = genai.GenerativeModel("gemini-1.5-flash-002")
+        model = genai.GenerativeModel("gemini-2.5-flash-live")
         
         # 2. Define the Search Tool explicitly using the class constructor
         # This fixes the "Unknown field" / "FunctionDeclaration" error
