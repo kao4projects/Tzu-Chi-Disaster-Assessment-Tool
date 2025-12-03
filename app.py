@@ -40,36 +40,145 @@ with st.sidebar:
 # --- 4. SCORING FRAMEWORK ---
 SCORING_FRAMEWORK = {
     "1. IMPACT": {
-        "1.1 People Affected": {"weight": 0.25, "rubric": "1=<10k; 2=10k-50k; 3=50k-100k; 4=100k-500k; 5=≥500k"},
-        "1.2 Fatalities": {"weight": 0.25, "rubric": "1=<50; 2=50-199; 3=200-499; 4=500-2,999; 5=≥3,000"},
-        "1.3 People in Need": {"weight": 0.30, "rubric": "1=<10k; 2=10k-50k; 3=50k-100k; 4=100k-500k; 5=≥500k"},
-        "1.4 Housing & Building Damage": {"weight": 0.10, "rubric": "1=Minor; 3=Moderate(10-30%); 5=Extreme(>60%)"},
-        "1.5 Land Mass Affected": {"weight": 0.10, "rubric": "1=Small; 3=District; 5=Provincial/National"}
+        # global weight = 0.375
+        "1.1 People Affected": {
+            "weight": 0.375,
+            "rubric": "1=<10,000; 2=10,000-50,000; 3=50,000-100,000; 4=100,000-499,999; 5=≥500,000"
+        },
+        # global weight = 0.375
+        "1.2 Fatalities": {
+            "weight": 0.375,
+            "rubric": "1=<50; 2=50-199; 3=200-499; 4=500-2,999; 5=≥3,000"
+        },
+        # global weight = 0.45
+        "1.3 People in Need": {
+            "weight": 0.45,
+            "rubric": "1=<10,000; 2=10,000-49,999; 3=50,000-199,999; 4=200,000-999,999; 5=≥1,000,000"
+        },
+        # global weight = 0.15
+        "1.4 Housing & Building Damage": {
+            "weight": 0.15,
+            "rubric": "1=<1,000 houses; 2=1,000-9,999; 3=10,000-49,999; 4=50,000-199,999; 5=≥200,000"
+        },
+        # global weight = 0.15
+        "1.5 Land Mass Affected": {
+            "weight": 0.15,
+            "rubric": "1=<100 km²; 2=100-999 km²; 3=1,000-4,999 km² or 2–3 districts; "
+                      "4=5,000-19,999 km² or ≥50% of 2–3 districts; 5=≥20,000 km² or multi-country large-scale"
+        },
     },
+
     "2. HUMANITARIAN CONDITIONS": {
-        "2.1 Food Security (IPC Score)": {"weight": 0.35, "rubric": "1=IPC1/2; 3=IPC3(Crisis); 5=IPC4/5(Famine)"},
-        "2.2 WASH / NFI Needs": {"weight": 0.20, "rubric": "1=Normal; 3=Limited; 5=Critical/Disease Risk"},
-        "2.3 Displacement": {"weight": 0.20, "rubric": "1=<1k; 2=1k-10k; 3=10k-50k; 4=50k-100k; 5=≥100k"},
-        "2.4 Vulnerable Groups Proportion": {"weight": 0.10, "rubric": "1=<10%; 2=10-19%; 3=20-34%; 4=35-49%; 5=≥50%"},
-        "2.5 Health System": {"weight": 0.15, "rubric": "1=Functioning; 3=Disrupted; 5=Collapsed"}
+        # global weight = 0.525
+        "2.1 Food Security (IPC Score)": {
+            "weight": 0.525,
+            "rubric": "1=IPC Phase 1–2; 2=IPC3+ <10k people; 3=widespread IPC3+/IPC4; "
+                      "4=widespread IPC4; 5=IPC5 or IPC3+ ≥1M people"
+        },
+        # global weight = 0.30
+        "2.2 WASH / NFI Needs": {
+            "weight": 0.30,
+            "rubric": "1=<1k need WASH/NFI; 2=1–9.9k; 3=10–49k; 4=50–199k; 5=≥200k"
+        },
+        # global weight = 0.30
+        "2.3 Displacement": {
+            "weight": 0.30,
+            "rubric": "1=<1,000 displaced; 2=1,000-9,999; 3=10,000-49,999; 4=50,000-199,999; 5=≥200,000"
+        },
+        # global weight = 0.15
+        "2.4 Vulnerable Groups Proportion": {
+            "weight": 0.15,
+            "rubric": "1=<10%; 2=10-19%; 3=20-34%; 4=35-49%; 5=≥50%"
+        },
+        # global weight = 0.225
+        "2.5 Health System": {
+            "weight": 0.225,
+            "rubric": "1=functioning health system, referral possible; 2=medicine shortages; "
+                      "3=regional hospitals closed, infectious disease present; "
+                      "4=most hospitals closed, large-scale infectious disease; "
+                      "5=external health actors lead / very high mortality from infectious disease"
+        },
     },
+
     "3. COMPLEXITY": {
-        "3.1 Access (roads/airports)": {"weight": 0.30, "rubric": "1=Open; 3=Blocked; 5=Inaccessible"},
-        "3.2 Security": {"weight": 0.30, "rubric": "1=Low; 3=Unstable; 5=High Violence"},
-        "3.3 Government Capacity": {"weight": 0.20, "rubric": "1=Strong; 3=Requesting Help; 5=Failed State"},
-        "3.4 Communications": {"weight": 0.20, "rubric": "1=Normal; 3=Intermittent; 5=Blackout"}
+        # global weight = 0.15
+        "3.1 Access (roads/airports)": {
+            "weight": 0.15,
+            "rubric": "1=free access; 2=localised disruption, can detour; 3=most roads blocked; "
+                      "4=severe access issues, time/corridor restrictions; 5=no road access"
+        },
+        # global weight = 0.15
+        "3.2 Security": {
+            "weight": 0.15,
+            "rubric": "1=low risk; 2=isolated incidents, predictable/controllable; "
+                      "3=frequent incidents, generally not life-threatening; "
+                      "4=high risk, frequent violent incidents; "
+                      "5=extreme, operations require heavy security or suspension"
+        },
+        # global weight = 0.10
+        "3.3 Government Capacity": {
+            "weight": 0.10,
+            "rubric": "1=adequate resources, strong coordination; 2=can manage most needs; "
+                      "3=formally requests international assistance; "
+                      "4=highly dependent on external support; 5=loss of governance/coordination"
+        },
+        # global weight = 0.10
+        "3.4 Communications": {
+            "weight": 0.10,
+            "rubric": "1=internet & video stable; 2=slow/unstable video; 3=intermittent outages; "
+                      "4=severe degradation, text-only; 5=large-scale blackout, only satellite works"
+        },
     },
+
     "4. STAKEHOLDER ATTENTION": {
-        "4.1 Media Intensity": {"weight": 0.25, "rubric": "1=Low; 3=National; 5=Global"},
-        "4.2 UN/INGO Activation": {"weight": 0.20, "rubric": "1=None; 3=Regional; 5=L3 Emergency"},
-        "4.3 Internal Interest (Tzu Chi)": {"weight": 0.55, "rubric": "1=Low; 3=Moderate; 5=High"}
+        # global weight = 0.25
+        "4.1 Media Intensity": {
+            "weight": 0.25,
+            "rubric": "1=ReliefWeb only; 2=local news only, no intl; 3=3+ major international outlets; "
+                      "4=widespread coverage (domestic & intl); 5=front-page headline level"
+        },
+        # global weight = 0.20
+        "4.2 UN/INGO Activation": {
+            "weight": 0.20,
+            "rubric": "1=monitoring only, no formal activation; 2=local NGOs responding; "
+                      "3=international response teams deployed; 4=OCHA formally activated/present; "
+                      "5=system-wide activation (e.g. HRP or similar)"
+        },
+        # global weight = 0.55
+        "4.3 Internal Interest (Tzu Chi)": {
+            "weight": 0.55,
+            "rubric": "1=low inquiry; 2=featured in daily intl updates; "
+                      "3=Religious Affairs/volunteers raising; "
+                      "4=Master/first-tier leadership engaged; "
+                      "5=Board interest, major fundraising / mobilisation"
+        },
     },
+
     "5. FEASIBILITY & PARTNERSHIPS": {
-        "5.1 Local Partnerships": {"weight": 0.40, "rubric": "1=None; 3=Potential; 5=Strong"},
-        "5.2 Legal & Financing": {"weight": 0.40, "rubric": "1=Blocked; 3=Restricted; 5=Easy"},
-        "5.3 Culture & Faith Alignment": {"weight": 0.20, "rubric": "1=Hostile; 3=Neutral; 5=Aligned"}
-    }
+        # global weight = 0.20
+        "5.1 Local Partnerships": {
+            "weight": 0.20,
+            "rubric": "1=no known partners; 2=contact only, untested; 3=≥1 reliable organisation; "
+                      "4=≥2 organisations with successful past collaborations; "
+                      "5=multiple mature, reliable partners"
+        },
+        # global weight = 0.20
+        "5.2 Legal & Financing": {
+            "weight": 0.20,
+            "rubric": "1=very high uncertainty / risk; 2=complex requirements; "
+                      "3=first-time but likely feasible; 4=feasible, clear procedures; "
+                      "5=smooth, established financial/legal channels"
+        },
+        # global weight = 0.10
+        "5.3 Culture & Faith Alignment": {
+            "weight": 0.10,
+            "rubric": "1=strong resistance; 2=requires heavy dialogue/negotiation; "
+                      "3=basic compatibility; 4=good collaborative environment; "
+                      "5=long-term trust, strong values alignment"
+        },
+    },
 }
+
 
 # --- 5. SYSTEM PROMPT ---
 rubric_text = ""
@@ -94,7 +203,10 @@ Extract specific fields.
 - **Url:** The direct link.
 
 ### 3. SCORING RUBRIC (STRICT):
+You MUST use the full 1–5 range. Scores 2 and 4 are allowed when the data clearly sits between two levels.
 Map found data to these scores (1-5).
+{rubric_text}
+
 {rubric_text}
 
 ### 4. QUALITATIVE INFERENCE:
@@ -158,40 +270,50 @@ def match_score_key(ai_key, framework_keys):
     return None
 
 def calculate_final_metrics(scores_dict):
-    total_weighted_sum = 0.0
+    """
+    Compute severity exactly like the Excel:
+    Severity = sum( (score_i / 5) * global_weight_i )
+    Global weights (Weighted Score column) already sum to 5.
+    """
+    total = 0.0
+
     for dim, indicators in SCORING_FRAMEWORK.items():
         for ind_name, details in indicators.items():
-            weight = details['weight']
+            weight = details["weight"]          # this IS the global weight (e.g. 0.375)
             score = scores_dict.get(ind_name, 3)
-            total_weighted_sum += score * weight
-            
-    final_severity_index = total_weighted_sum / 5.0
-    inform_score = final_severity_index * 2.0 
-    
+            # normalise score 1–5 to 0–1, then multiply by global weight
+            total += (score / 5.0) * weight
+
+    final_severity_index = total          # already in 0–5 range
+    inform_score = final_severity_index * 2.0
+
     if final_severity_index >= 4.0:
         category = "A"
         label = "MAJOR International"
-        action = "IMMEDIATE MOBILISATION: Initiate assessment, Stocktake on Inventory & Emergency funds, Contact international partners."
-        color = "#ff4b4b" 
+        action = ("IMMEDIATE MOBILISATION: Initiate assessment, "
+                  "stocktake inventory & emergency funds, contact international partners.")
+        color = "#ff4b4b"
     elif final_severity_index >= 2.5:
         category = "B"
         label = "Medium Scale"
-        action = "WATCH LIST: Maintain contact with local partners, Monitor developments for 72h."
+        action = ("WATCH LIST: Maintain contact with local partners, "
+                  "monitor developments for 72h.")
         color = "#ffa421"
     else:
         category = "C"
         label = "Minimal / Local"
-        action = "MONITORING: No HQ deployment likely needed, Pray & Monitor."
+        action = "MONITORING: No HQ deployment likely needed. Pray & monitor."
         color = "#09ab3b"
-        
+
     return {
-        "severity": round(final_severity_index, 1),
-        "inform": round(inform_score, 1),
+        "severity": round(final_severity_index, 2),
+        "inform": round(inform_score, 2),
         "category": category,
         "cat_label": label,
         "action": action,
-        "color": color
+        "color": color,
     }
+
 
 def safe_get_response_text(response):
     """Safely extract a string payload from GenerateContentResponse."""
