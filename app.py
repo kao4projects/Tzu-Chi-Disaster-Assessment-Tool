@@ -9,7 +9,7 @@ import datetime
 
 # --- 1. CONFIGURATION ---
 st.set_page_config(page_title="Tzu Chi Disaster Tool", layout="wide")
-st.title("Tzu Chi Global Disaster Assessment Tool (v14: Robust)")
+st.title("Tzu Chi Global Disaster Assessment Tool (v16: Production)")
 
 # --- 2. API KEY SETUP ---
 if "GOOGLE_API_KEY" in st.secrets:
@@ -95,7 +95,7 @@ Your task is to populate a disaster matrix with EXACT DATA and SCORING.
 
 ### 1. SEARCH & RECOVERY PROTOCOL:
 - **Primary:** Search the 'Target Sources' for real-time data.
-- **Secondary (Simulation Fallback):** If the search returns 0 results (e.g., future date scenario like 2025), **DO NOT RETURN "UNKNOWN"**. You MUST generate a realistic *Estimated Scenario* based on the disaster type and location history. Label sources as "Simulation Estimate".
+- **Secondary (Zero Data):** If the search returns 0 results (e.g., extremely new event), **DO NOT RETURN "UNKNOWN"**. Use the descriptive text from your knowledge base or search snippets to estimate severity.
 
 ### 2. KEY FIGURES EXTRACTION:
 Extract specific fields.
@@ -147,6 +147,11 @@ def calculate_final_metrics(scores_dict):
             score = scores_dict.get(ind_name, 3)
             total_weighted_sum += score * weight
             
+    # Normalize to 1-5 Scale (Assuming 5 Dimensions with weights summing to 1.0 each)
+    # Total sum will be approx 0-5 range already if weights are 0.25, 0.25 etc.
+    # Actually, let's just use the sum directly if the weights per dimension sum to 1.0
+    # and we sum across 5 dimensions, we need to divide by 5.
+    
     final_severity_index = total_weighted_sum / 5.0
     inform_score = final_severity_index * 2.0 
     
@@ -236,8 +241,7 @@ def fetch_ai_assessment(api_key, query, domains):
                     if chunk.web and chunk.web.uri:
                         valid_urls.append(chunk.web.uri)
         except Exception as e:
-            # st.write(f"Metadata extract error: {e}") # Silent fail usually better
-            pass
+            pass # Silent fail usually better
 
         if not response.text:
             return None, valid_urls, "Empty Response"
@@ -246,7 +250,7 @@ def fetch_ai_assessment(api_key, query, domains):
         return data, valid_urls, raw_text_debug
         
     except Exception as e:
-        st.error(f"API Error details: {e}")
+        # Fallback empty return on API error
         return None, [], str(e)
 
 # --- 7. UI RENDER ---
@@ -282,7 +286,10 @@ if run_btn and query:
                 matched_key = match_score_key(ai_key, framework_keys)
                 if matched_key:
                     try:
-                        score_val = int(ai_val_obj.get("score", 3))
+                        # Extract score, ensure it's int
+                        val_str = str(ai_val_obj.get("score", 3))
+                        # Handle cases where AI returns "3 (Moderate)"
+                        score_val = int(re.search(r'\d+', val_str).group())
                         st.session_state.current_scores[matched_key] = score_val
                     except:
                         pass # Keep default if parsing fails
@@ -376,6 +383,7 @@ if st.session_state.assessment_data:
                             st.markdown(f"🔗 {links}")
                             
                     with c3:
+                        # Use the session state value which was updated in the button callback
                         current_val = st.session_state.current_scores.get(indicator_name, ai_score)
                         new_val = st.slider(
                             "Score", 1, 5, int(current_val),
