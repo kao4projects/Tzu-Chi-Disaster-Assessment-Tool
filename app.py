@@ -8,7 +8,7 @@ import time
 
 # --- 1. CONFIGURATION ---
 st.set_page_config(page_title="Tzu Chi Disaster Tool", layout="wide")
-st.title("Tzu Chi Global Disaster Assessment Tool (v5.1: Stable)")
+st.title("Tzu Chi Global Disaster Assessment Tool (v6: Source Control)")
 
 # --- 2. API KEY SETUP ---
 if "GOOGLE_API_KEY" in st.secrets:
@@ -17,7 +17,38 @@ else:
     st.error("Missing GOOGLE_API_KEY. Please add it to Streamlit Secrets.")
     st.stop()
 
-# --- 3. SCORING FRAMEWORK ---
+# --- 3. SIDEBAR: SOURCE CONTROL ---
+with st.sidebar:
+    st.header("Research Settings")
+    st.caption("Control where the AI looks for information.")
+    
+    # Pre-defined high-trust domains
+    DEFAULT_DOMAINS = [
+        "reliefweb.int",
+        "unocha.org",
+        "bbc.com",
+        "reuters.com",
+        "aljazeera.com",
+        "news.un.org",   
+        "cnn.com", 
+        "euronews.com",
+        "apnews.com"
+    ]
+    
+    selected_domains = st.multiselect(
+        "Allowed Domains:",
+        options=DEFAULT_DOMAINS,
+        default=DEFAULT_DOMAINS[:4] # Default to first 4
+    )
+    
+    # Custom domain input
+    custom_domain = st.text_input("Add Custom Domain (e.g., cnn.com):")
+    if custom_domain and custom_domain not in selected_domains:
+        selected_domains.append(custom_domain)
+        
+    strict_mode = st.checkbox("Strict Mode (Limit search ONLY to these sites)", value=False)
+
+# --- 4. SCORING FRAMEWORK ---
 SCORING_FRAMEWORK = {
     "1. IMPACT": {
         "1.1 People Affected": 0.25,
@@ -56,17 +87,15 @@ for cat, indicators in SCORING_FRAMEWORK.items():
     for name, weight in indicators.items():
         FLAT_WEIGHTS[name] = weight
 
-# --- 4. SYSTEM PROMPT (BREAKING NEWS MODE) ---
+# --- 5. SYSTEM PROMPT ---
 SYSTEM_PROMPT = """
 You are the Lead Researcher for the 'Tzu Chi Disaster Assessment Unit'.
-Your task is to find SPECIFIC NUMBERS and SOURCES for a real-time, unfolding disaster.
+Your task is to find SPECIFIC NUMBERS and SOURCES for a disaster.
 
-### BREAKING NEWS PROTOCOL:
-The user states this is a **REAL, UNFOLDING EVENT**. Official UN reports (OCHA/ReliefWeb) may not exist yet.
-1. **Search Strategy:** Search BROADLY. Do not restrict to UN sites. Look for local news (e.g., "Daily Mirror Sri Lanka", "Ada Derana", "Newsfirst.lk").
-2. **Prioritize Recency:** Value "Live Updates" and articles from the last 24 hours over older "verified" reports.
-3. **Extraction Rules:**
-   - If exact numbers are conflicting, report the **Highest Reported Estimate** (conservative approach for disaster relief).
+### RESEARCH PROTOCOL:
+1. **Source Compliance:** You have been given a specific list of trusted domains. PRIORITIZE data from these sources.
+2. **Extraction Rules:**
+   - Report the **Highest Reported Estimate** if numbers conflict.
    - If a source says "Hundreds feared dead", report **"Hundreds (Est.)"**.
    - **NEVER** return "Unknown" if there are news reports. Dig out the numbers.
 
@@ -76,7 +105,7 @@ The user states this is a **REAL, UNFOLDING EVENT**. Official UN reports (OCHA/R
     "title": "Crisis Name",
     "country": "Country",
     "date": "Date of Event",
-    "description": "3-4 sentence summary of the situation."
+    "description": "3-4 sentence summary."
   },
   "key_figures": {
     "affected": {"value": "e.g. 1.2 million", "source_url": "url..."},
@@ -87,21 +116,16 @@ The user states this is a **REAL, UNFOLDING EVENT**. Official UN reports (OCHA/R
   "scores": {
     "1.1 People Affected": {
       "score": 1-5, 
-      "extracted_value": "The specific number found (e.g., '1.4 million')",
-      "justification": "Why this score? (e.g., >1M is Critical)",
+      "extracted_value": "The specific number found",
+      "justification": "Rationale",
       "source_urls": ["url1", "url2"]
     },
     ... (Repeat for ALL 19 indicators) ...
   }
 }
-
-### SCORING RUBRIC:
-- **Fatalities:** 1(<10), 2(10-100), 3(100-500), 4(500-1k), 5(>1k)
-- **Affected:** 1(<10k), 3(100k-1M), 5(>1M)
-- **Displaced:** 1(<1k), 3(10k-50k), 5(>100k)
 """
 
-# --- 5. CORE LOGIC ---
+# --- 6. CORE LOGIC ---
 
 def calculate_final_metrics(scores_dict):
     raw_weighted_sum = 0.0
@@ -138,9 +162,6 @@ def calculate_final_metrics(scores_dict):
     }
 
 def robust_json_extractor(text):
-    """
-    Robustly extracts JSON from a string using raw_decode to ignore trailing text.
-    """
     try:
         start_idx = text.find('{')
         if start_idx == -1: return None
@@ -150,15 +171,31 @@ def robust_json_extractor(text):
     except Exception as e:
         return None
 
-def fetch_ai_assessment(api_key, query):
-    """Calls Gemini API with Open Web Search."""
+def fetch_ai_assessment(api_key, query, domains, strict):
+    """
+    Calls Gemini API with Domain Injection.
+    """
     try:
         client = genai.Client(api_key=api_key)
         
+        # --- DOMAIN LOGIC ---
+        # We construct a search string like: "Cyclone Ditwah Sri Lanka (site:reliefweb.int OR site:bbc.com ...)"
+        if domains:
+            site_operators = " OR ".join([f"site:{d}" for d in domains])
+            if strict:
+                # STRICT: We append the sites and tell the model to ONLY use them
+                domain_instruction = f"Search specifically using these sources: ({site_operators})"
+            else:
+                # LOOSE: We prefer them but allow others if needed
+                domain_instruction = f"Prioritize information from: {', '.join(domains)}"
+        else:
+            domain_instruction = "Search trusted humanitarian and local news sources."
+
         full_prompt = (
             f"{SYSTEM_PROMPT}\n\n"
             f"USER QUERY: {query}\n"
-            "SEARCH INSTRUCTION: Search for local Sri Lankan news (Daily Mirror, Ada Derana) and global wires (Reuters) for the LATEST death toll and damage assessments."
+            f"DOMAIN CONTROLS: {domain_instruction}\n"
+            "INSTRUCTION: Find the LATEST death toll, affected numbers, and damage assessments."
         )
         
         tool_config = types.GenerateContentConfig(
@@ -180,7 +217,7 @@ def fetch_ai_assessment(api_key, query):
                 config=tool_config
             )
 
-        # --- FIX: ROBUST GROUNDING METADATA EXTRACTION ---
+        # Robust Metadata Extraction
         debug_sources = []
         try:
             if (response.candidates and 
@@ -191,7 +228,7 @@ def fetch_ai_assessment(api_key, query):
                     if chunk.web:
                         debug_sources.append(f"{chunk.web.title}: {chunk.web.uri}")
         except Exception:
-            pass # Fail silently on debug data if structure changes
+            pass
 
         if not response.text:
             return None, debug_sources
@@ -203,7 +240,7 @@ def fetch_ai_assessment(api_key, query):
         st.error(f"API Error details: {e}")
         return None, []
 
-# --- 6. UI RENDER ---
+# --- 7. UI RENDER ---
 
 query = st.text_area("Describe the disaster (Location, Date, Type):", 
                      placeholder="e.g., Cyclone Ditwah, Sri Lanka, Dec 2025")
@@ -217,8 +254,12 @@ if "current_scores" not in st.session_state:
     st.session_state.current_scores = {}
 
 if run_btn and query:
-    with st.spinner("🔍 Scanning Local News & Global Wires..."):
-        data, sources = fetch_ai_assessment(api_key, query)
+    # Display the domains being searched
+    if selected_domains:
+        st.caption(f"Searching across: {', '.join(selected_domains)}")
+        
+    with st.spinner("🔍 Researching..."):
+        data, sources = fetch_ai_assessment(api_key, query, selected_domains, strict_mode)
         
         if data:
             st.session_state.assessment_data = data
@@ -226,7 +267,7 @@ if run_btn and query:
             for key, val in data.get("scores", {}).items():
                 st.session_state.current_scores[key] = val.get("score", 3)
         else:
-            st.error("Failed to retrieve data. Please check the spelling of the disaster name.")
+            st.error("Failed to retrieve data.")
 
 if st.session_state.assessment_data:
     data = st.session_state.assessment_data
@@ -337,10 +378,10 @@ if st.session_state.assessment_data:
     </div>
     """, unsafe_allow_html=True)
     
-    with st.expander("Search Debugger (If results are empty, check here)"):
+    with st.expander("Search Debugger (View Sources)"):
         if st.session_state.debug_sources:
-            st.write("Google Search actually returned these sources:")
+            st.write("Sources found by AI:")
             for src in st.session_state.debug_sources:
                 st.write(f"- {src}")
         else:
-            st.warning("Google Search returned NO results. Is the name spelled correctly?")
+            st.info("No external links were returned by the search tool.")
