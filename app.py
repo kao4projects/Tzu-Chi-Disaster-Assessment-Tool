@@ -405,29 +405,26 @@ def fetch_ai_assessment(api_key, query, domains):
             "INSTRUCTION: Find the LATEST data. Use descriptive text to infer scores if numbers are missing."
         )
 
-        # ----- NEW: force JSON output -----
-    tool_config = types.GenerateContentConfig(
-      tools=[types.Tool(google_search=types.GoogleSearch())],
-      response_mime_type="application/json",
-    )
+        # ✅ VALID CONFIG (NO forbidden fields)
+        tool_config = types.GenerateContentConfig(
+            tools=[types.Tool(google_search=types.GoogleSearch())],
+        )
 
-        # Try 2.5 then fall back to 2.0
-    try:
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=full_prompt,
-        config=tool_config,
-    )
+        # ✅ Proper try/except structure
+        try:
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=full_prompt,
+                config=tool_config,
+            )
+        except Exception:
+            response = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=full_prompt,
+                config=tool_config,
+            )
 
-except Exception:
-    response = client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=full_prompt,
-        config=tool_config,
-    )
-
-
-        # ---------- Extract URLs from grounding metadata ----------
+        # ---------- Extract URLs ----------
         valid_urls = []
         try:
             for cand in getattr(response, "candidates", []) or []:
@@ -444,17 +441,17 @@ except Exception:
         except Exception:
             pass
 
-        # ---------- Safely get raw text ----------
+        # ---------- Extract text ----------
         raw_text_debug = safe_get_response_text(response)
         if not raw_text_debug:
-            return None, valid_urls, "Model response contained no text (possibly tool-only call)."
+            return None, valid_urls, "Model returned no text."
 
         # ---------- Parse JSON ----------
         data = robust_json_extractor(raw_text_debug)
         if data is None:
             snippet = raw_text_debug[:1200]
             debug_msg = (
-                "Could not parse JSON from model, even after lenient parsing.\n\n"
+                "Could not parse JSON from model.\n\n"
                 "First part of response:\n\n"
                 f"{snippet}"
             )
