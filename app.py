@@ -95,7 +95,7 @@ Your task is to populate a disaster matrix with EXACT DATA and SCORING.
 
 ### 1. SEARCH & RECOVERY PROTOCOL:
 - **Primary:** Search the 'Target Sources' for real-time data.
-- **Secondary (Zero Data):** If the search returns 0 results (e.g., extremely new event), **DO NOT RETURN "UNKNOWN"**. Use the descriptive text from your knowledge base or search snippets to estimate severity.
+- **Strict Data Requirement:** You must find real-world reports. Do not simulate data. If zero information is found after a thorough search, state "No data found".
 
 ### 2. KEY FIGURES EXTRACTION:
 Extract specific fields.
