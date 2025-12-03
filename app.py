@@ -115,17 +115,17 @@ def calculate_final_metrics(scores_dict):
     if severity_score >= 4.0:
         category = "A"
         label = "Major International"
-        action = "IMMEDIATE MOBILISATION: Initiate assessment team, release emergency funds, alert international partners."
+        action = "IMMEDIATE MOBILISATION: Initiate assessment, Inventory Stocktake, Daily Briefing to Executives, Contact international partners."
         color = "#ff4b4b" # Red
     elif severity_score >= 2.5:
         category = "B"
         label = "Medium Scale"
-        action = "WATCH LIST: Maintain contact with local partners, prepare standby funds, monitor for 48h."
+        action = "WATCH LIST: Maintain contact with local partners, Monitor for 48h."
         color = "#ffa421" # Orange
     else:
         category = "C"
         label = "Local / Minimal"
-        action = "MONITORING: Local volunteers to assess; no HQ deployment likely needed."
+        action = "MONITORING: No HQ deployment likely needed, Pray and Observe."
         color = "#09ab3b" # Green
         
     return {
