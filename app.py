@@ -406,10 +406,10 @@ def fetch_ai_assessment(api_key, query, domains):
         )
 
         # ----- NEW: force JSON output -----
-     tool_config = types.GenerateContentConfig(
+    tool_config = types.GenerateContentConfig(
     tools=[types.Tool(google_search=types.GoogleSearch())],
     response_mime_type="application/json",
-)
+    )
 
         # Try 2.5 then fall back to 2.0
     try:
@@ -418,6 +418,7 @@ def fetch_ai_assessment(api_key, query, domains):
         contents=full_prompt,
         config=tool_config,
     )
+
 except Exception:
     response = client.models.generate_content(
         model="gemini-2.0-flash",
