@@ -144,7 +144,7 @@ def fetch_ai_assessment(api_key, query):
         # 1. USE STABLE MODEL:
         # We use "gemini-1.5-flash" because it is the most stable version for Search.
         # (gemini-2.5 does not exist yet).
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        model = genai.GenerativeModel("gemini-2.5-flash")
         
         # 2. DICTIONARY TOOL CONFIGURATION (Version Safe):
         # Instead of importing the 'Tool' class (which causes errors on different versions),
