@@ -220,19 +220,30 @@ def safe_get_response_text(response):
 
 def robust_json_extractor(text: str):
     """
-    Leniently pull a JSON object out of a model response.
+    Try (very) hard to pull a JSON object out of a model response.
 
-    - Finds the first '{' and the last '}' and treats that as the JSON object.
-    - First tries json.loads.
-    - If that fails (e.g. due to trailing commas), converts JSON to a Python
-      literal and uses ast.literal_eval, which is more forgiving.
+    Handles:
+    - ```json ... ``` fenced blocks
+    - Extra commentary before/after the JSON
+    - Trailing commas and null/true/false using ast.literal_eval
     """
     if not text:
         return None
 
+    # Always work on a plain string
     text = str(text).strip()
 
-    # Cut down to just the {...} region
+    # --- Strip markdown fences if present ---
+    # e.g. ```json\n{...}\n```  or  ```\n{...}\n```
+    if text.startswith("```"):
+        # remove the first ``` line
+        parts = text.split("```", 2)
+        if len(parts) >= 2:
+            # everything after the first ``` block opener
+            text = parts[1]
+        text = text.strip()
+
+    # Now find the first '{' and the last '}'
     start = text.find("{")
     end = text.rfind("}")
     if start == -1 or end == -1 or end <= start:
@@ -240,14 +251,14 @@ def robust_json_extractor(text: str):
 
     candidate = text[start : end + 1]
 
-    # First attempt: strict JSON
+    # --- First attempt: strict JSON ---
     try:
         return json.loads(candidate)
     except Exception:
         pass
 
-    # Fallback: convert to Python literal and use ast.literal_eval, which
-    # tolerates trailing commas etc.
+    # --- Fallback: Python literal via ast.literal_eval (more forgiving) ---
+    # Convert JSON literal keywords to Python
     candidate_py = re.sub(r"\bnull\b", "None", candidate)
     candidate_py = re.sub(r"\btrue\b", "True", candidate_py, flags=re.I)
     candidate_py = re.sub(r"\bfalse\b", "False", candidate_py, flags=re.I)
@@ -259,6 +270,7 @@ def robust_json_extractor(text: str):
         return None
     except Exception:
         return None
+
 
 
 def fetch_ai_assessment(api_key, query, domains):
@@ -275,7 +287,6 @@ def fetch_ai_assessment(api_key, query, domains):
 
         tool_config = types.GenerateContentConfig(
             tools=[types.Tool(google_search=types.GoogleSearch())],
-            response_mime_type="application/json",
         )
 
         # Try 2.5 then fall back to 2.0
