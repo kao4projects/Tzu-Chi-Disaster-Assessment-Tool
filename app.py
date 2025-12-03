@@ -1,9 +1,10 @@
 import streamlit as st
-import google.generativeai as genai
+import google-genai as genai
 import json
 import pandas as pd
 import importlib.metadata
-from google.generativeai.types import Tool, GoogleSearchRetrieval, DynamicRetrievalConfig
+from google import genai
+from google.genai import types
 
 # --- 1. CONFIGURATION ---
 st.set_page_config(page_title="Tzu Chi Disaster Tool", layout="wide")
