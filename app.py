@@ -104,7 +104,7 @@ Return ONLY valid JSON with this structure (no markdown formatting):
 
 Use the following SCORING RUBRIC to determine scores (1-5):
 [Insert Abbreviated Rubric Here - The AI knows the rubric from the context context, but strictly mapped to the keys above]
-For 'Unknown' data, default to score 3 but note it in justification.
+For 'Unknown' data, default to score 1 but note it in justification.
 """
 
 # --- 3. HELPER FUNCTIONS ---
@@ -159,7 +159,7 @@ def fetch_ai_assessment(api_key, query):
     """Calls Gemini API to get the JSON data."""
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-1.5-flash") # Or pro
+        model = genai.GenerativeModel("gemini-1.5-flash-001") # Or pro
         
         full_prompt = f"{SYSTEM_PROMPT}\n\nUSER QUERY: {query}"
         
