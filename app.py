@@ -2,6 +2,7 @@ import streamlit as st
 import google.generativeai as genai
 import json
 import pandas as pd
+from google.generativeai.types import Tool, GoogleSearchRetrieval
 
 
 # --- 1. CONFIGURATION & SCORING FRAMEWORK ---
