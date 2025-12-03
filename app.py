@@ -143,49 +143,7 @@ Do NOT include comments or ellipses.
   }}
 }}
 """
-# --- 5b. STRUCTURED OUTPUT SCHEMA FOR GEMINI ---
-RESPONSE_SCHEMA = {
-    "type": "OBJECT",
-    "properties": {
-        "summary": {
-            "type": "OBJECT",
-            "properties": {
-                "title":       {"type": "STRING", "nullable": True},
-                "country":     {"type": "STRING", "nullable": True},
-                "date":        {"type": "STRING", "nullable": True},
-                "description": {"type": "STRING", "nullable": True},
-            },
-        },
-        "key_figures": {
-            "type": "OBJECT",
-            "additionalProperties": {
-                "type": "OBJECT",
-                "properties": {
-                    "value":  {"type": "STRING", "nullable": True},
-                    "date":   {"type": "STRING", "nullable": True},
-                    "source": {"type": "STRING", "nullable": True},
-                    "url":    {"type": "STRING", "nullable": True},
-                },
-            },
-        },
-        "scores": {
-            "type": "OBJECT",
-            "additionalProperties": {
-                "type": "OBJECT",
-                "properties": {
-                    "score":           {"type": "INTEGER", "nullable": True},
-                    "extracted_value": {"type": "STRING", "nullable": True},
-                    "justification":   {"type": "STRING", "nullable": True},
-                    "source_urls": {
-                        "type": "ARRAY",
-                        "items": {"type": "STRING"},
-                        "nullable": True,
-                    },
-                },
-            },
-        },
-    },
-}
+
 
 
 # --- 6. HELPER FUNCTIONS ---
