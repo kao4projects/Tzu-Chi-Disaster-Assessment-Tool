@@ -65,9 +65,9 @@ SCORING_FRAMEWORK = {
         "4.3 Internal Interest (Tzu Chi)": {"weight": 0.55, "rubric": "1=Low; 3=Moderate; 5=High"}
     },
     "5. FEASIBILITY & PARTNERSHIPS": {
-        "5.1 Local Partnerships": {"weight": 0.40, "rubric": "1=Strong; 3=Potential; 5=None"},
-        "5.2 Legal & Financing": {"weight": 0.40, "rubric": "1=Easy; 3=Restricted; 5=Blocked"},
-        "5.3 Culture & Faith Alignment": {"weight": 0.20, "rubric": "1=Aligned; 3=Neutral; 5=Hostile"}
+        "5.1 Local Partnerships": {"weight": 0.40, "rubric": "1=None; 3=Potential; 5=Strong"},
+        "5.2 Legal & Financing": {"weight": 0.40, "rubric": "1=Blocked; 3=Restricted; 5=Easy"},
+        "5.3 Culture & Faith Alignment": {"weight": 0.20, "rubric": "1=Hostile; 3=Neutral; 5=Aligned"}
     }
 }
 
