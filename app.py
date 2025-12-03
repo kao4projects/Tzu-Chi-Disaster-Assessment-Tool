@@ -2,7 +2,7 @@ import streamlit as st
 import google.generativeai as genai
 import json
 import pandas as pd
-from google.generativeai.types import Tool, GoogleSearchRetrieval
+
 
 # --- 1. CONFIGURATION & SCORING FRAMEWORK ---
 # We define the indicators and weights exactly as specified in your framework.
