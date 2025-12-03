@@ -276,13 +276,13 @@ def fetch_ai_assessment(api_key, query, domains):
         # Try Gemini 2.0 first, then fall back to 1.5 if needed
         try:
             response = client.models.generate_content(
-                model="gemini-2.0-flash",
+                model="gemini-2.5-flash",
                 contents=full_prompt,
                 config=tool_config,
             )
         except Exception:
             response = client.models.generate_content(
-                model="gemini-1.5-flash",
+                model="gemini-2.0-flash",
                 contents=full_prompt,
                 config=tool_config,
             )
@@ -350,30 +350,35 @@ if "raw_debug" not in st.session_state:
 if run_btn and query:
     with st.spinner("🔍 Researching Sources & Scoring against Rubric..."):
         data, urls, raw_debug = fetch_ai_assessment(api_key, query, selected_domains)
-        
-        st.session_state.raw_debug = raw_debug # Store raw text for debugging
-        
-        if data:
+
+        # Always keep what came back for debugging
+        st.session_state.raw_debug = raw_debug
+        st.session_state.valid_urls = urls or []
+
+        # IMPORTANT: check for None, not truthiness
+        if data is not None:
             st.session_state.assessment_data = data
-            st.session_state.valid_urls = urls
-            
+
             framework_keys = []
             for d in SCORING_FRAMEWORK.values():
                 framework_keys.extend(d.keys())
-                
+
             for ai_key, ai_val_obj in data.get("scores", {}).items():
                 matched_key = match_score_key(ai_key, framework_keys)
                 if matched_key:
                     try:
-                        # Extract score, ensure it's int
                         val_str = str(ai_val_obj.get("score", 3))
-                        # Handle cases where AI returns "3 (Moderate)"
                         score_val = int(re.search(r'\d+', val_str).group())
                         st.session_state.current_scores[matched_key] = score_val
-                    except:
-                        pass # Keep default if parsing fails
+                    except Exception:
+                        # keep default if parsing fails
+                        pass
         else:
-            st.error("Failed to retrieve data. Check Debugger below.")
+            st.error("Failed to retrieve data. See reason below in the Debugger.")
+            # Show the raw_debug immediately so you don’t have to hunt for it
+            if raw_debug:
+                st.code(str(raw_debug), language="text")
+
 
 if st.session_state.assessment_data:
     data = st.session_state.assessment_data
