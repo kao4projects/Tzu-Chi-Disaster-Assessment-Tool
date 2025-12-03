@@ -211,7 +211,7 @@ def fetch_ai_assessment(api_key, query, domains):
 
         try:
             response = client.models.generate_content(
-                model='gemini-2.5-pro',
+                model='gemini-3-pro',
                 contents=full_prompt,
                 config=tool_config
             )
