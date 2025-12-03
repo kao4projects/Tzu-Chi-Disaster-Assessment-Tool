@@ -159,7 +159,7 @@ def fetch_ai_assessment(api_key, query):
     """Calls Gemini API to get the JSON data."""
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-1.5-flash-001") # Or pro
+        model = genai.GenerativeModel("gemini-2.5-flash") # Or pro
         
         full_prompt = f"{SYSTEM_PROMPT}\n\nUSER QUERY: {query}"
         
