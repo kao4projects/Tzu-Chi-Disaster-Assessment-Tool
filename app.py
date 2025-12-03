@@ -1,3 +1,4 @@
+import ast
 import streamlit as st
 from google import genai
 from google.genai import types
@@ -259,6 +260,49 @@ def safe_get_response_text(response):
         pass
     return None
 
+def robust_json_extractor(text: str):
+    """
+    Leniently pull a JSON object out of a model response.
+
+    - Finds the first '{' and the last '}' and treats that as the JSON object.
+    - First tries json.loads.
+    - If that fails (e.g. due to trailing commas), converts JSON to a Python
+      literal and uses ast.literal_eval, which is more forgiving.
+    """
+    if not text:
+        return None
+
+    text = str(text).strip()
+
+    # Cut down to just the {...} region
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return None
+
+    candidate = text[start : end + 1]
+
+    # First attempt: strict JSON
+    try:
+        return json.loads(candidate)
+    except Exception:
+        pass
+
+    # Fallback: convert to Python literal and use ast.literal_eval, which
+    # tolerates trailing commas etc.
+    candidate_py = re.sub(r"\bnull\b", "None", candidate)
+    candidate_py = re.sub(r"\btrue\b", "True", candidate_py, flags=re.I)
+    candidate_py = re.sub(r"\bfalse\b", "False", candidate_py, flags=re.I)
+
+    try:
+        obj = ast.literal_eval(candidate_py)
+        if isinstance(obj, dict):
+            return obj
+        return None
+    except Exception:
+        return None
+
+
 def fetch_ai_assessment(api_key, query, domains):
     try:
         client = genai.Client(api_key=api_key)
@@ -268,17 +312,15 @@ def fetch_ai_assessment(api_key, query, domains):
             f"{SYSTEM_PROMPT}\n\n"
             f"USER QUERY: {query}\n"
             f"TARGET SOURCES: {domain_list_str}\n"
-            "INSTRUCTION: Find the LATEST data. Use descriptive text to infer scores if numbers are missing. "
-            "Always fill every indicator in the 'scores' object."
+            "INSTRUCTION: Find the LATEST data. Use descriptive text to infer scores if numbers are missing."
         )
 
         tool_config = types.GenerateContentConfig(
             tools=[types.Tool(google_search=types.GoogleSearch())],
             response_mime_type="application/json",
-            response_schema=RESPONSE_SCHEMA,
         )
 
-        # Try 2.5 then fall back
+        # Try 2.5 then fall back to 2.0
         try:
             response = client.models.generate_content(
                 model="gemini-2.5-flash",
@@ -309,32 +351,27 @@ def fetch_ai_assessment(api_key, query, domains):
         except Exception:
             pass
 
-        # ---------- Prefer SDK-parsed structured output ----------
-        if getattr(response, "parsed", None) is not None:
-            data = response.parsed
-            # If it's pydantic, convert to plain dict
-            if hasattr(data, "model_dump"):
-                data = data.model_dump()
-            return data, valid_urls, json.dumps(data, indent=2)
+        # ---------- Safely get raw text ----------
+        raw_text_debug = safe_get_response_text(response)
+        if not raw_text_debug:
+            return None, valid_urls, "Model response contained no text (possibly tool-only call)."
 
-        # ---------- Fallback: use text and best-effort JSON load ----------
-        raw_text = safe_get_response_text(response)
-        if not raw_text:
-            return None, valid_urls, "Model response contained no text and no parsed JSON."
-
-        try:
-            data = json.loads(raw_text)
-            return data, valid_urls, raw_text
-        except Exception as e:
-            snippet = raw_text[:1200]
+        # ---------- Parse JSON (lenient) ----------
+        data = robust_json_extractor(raw_text_debug)
+        if data is None:
+            snippet = raw_text_debug[:1200]
             debug_msg = (
-                f"Could not parse JSON from model even after structured-output config. "
-                f"json.loads error: {e!r}\n\nFirst part of response:\n\n{snippet}"
+                "Could not parse JSON from model, even after lenient parsing.\n\n"
+                "First part of response:\n\n"
+                f"{snippet}"
             )
             return None, valid_urls, debug_msg
 
+        return data, valid_urls, raw_text_debug
+
     except Exception as e:
         return None, [], f"Exception in fetch_ai_assessment: {e!r}"
+
 
 # --- 7. UI RENDER ---
 
