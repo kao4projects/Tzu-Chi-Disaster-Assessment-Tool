@@ -113,6 +113,9 @@ If exact numbers are missing, score based on text severity (e.g. "Catastrophic" 
 **DO NOT DEFAULT TO 3.** If data implies severity, score high.
 
 ### OUTPUT FORMAT (JSON ONLY):
+DO NOT wrap the JSON in backticks or Markdown code fences.
+DO NOT add any explanation or commentary before or after the JSON.
+Return ONLY the JSON object.
 {{
   "summary": {{ "title": "...", "country": "...", "date": "...", "description": "..." }},
   "key_figures": {{
@@ -220,39 +223,51 @@ def robust_json_extractor(text: str):
     """
     Try to pull a JSON object out of a model response.
 
-    Handles:
-    - Raw JSON
-    - ```json ... ``` fenced blocks
-    - JSON embedded in extra commentary
+    - Handles code fences like ```json { ... } ```
+    - Ignores any extra commentary before/after the JSON
+    - Tries to salvage cases where there is trailing junk after the closing brace
     """
+    if not text:
+        return None
+
+    # Normalise whitespace
+    text = str(text).strip()
+
+    # Quick strip of simple fenced block: ```...```
+    if text.startswith("```") and text.endswith("```"):
+        # Remove leading/trailing backticks and spaces
+        text = text.strip("`").strip()
+
+    # Find the first {...} block in the text (greedy to catch the outermost one)
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if not match:
+        return None
+
+    candidate = match.group(0)
+
+    # First attempt: direct parse
     try:
-        if not text:
-            return None
-
-        text = text.strip()
-
-        # If it already looks like a pure JSON object
-        if text.startswith("{") and text.endswith("}"):
-            return json.loads(text)
-
-        # Strip markdown fenced block if present
-        if "```" in text:
-            fenced = re.search(
-                r"```(?:json)?\s*(\{.*\})\s*```",
-                text,
-                re.DOTALL | re.IGNORECASE,
-            )
-            if fenced:
-                return json.loads(fenced.group(1))
-
-        # Fallback: first {...} block
-        match = re.search(r"\{.*\}", text, re.DOTALL)
-        if match:
-            return json.loads(match.group(0))
-
-        return None
+        return json.loads(candidate)
     except Exception:
-        return None
+        pass  # we'll try to salvage below
+
+    # ---- Salvage mode ----
+    # Sometimes the model appends a note or extra characters after the root object.
+    # We repeatedly trim characters after the last '}' and retry a few times.
+    s = candidate
+    for _ in range(10):
+        last = s.rfind("}")
+        if last <= 0:
+            break
+        s = s[: last + 1]  # keep up to and including this brace
+        try:
+            return json.loads(s)
+        except Exception:
+            continue
+
+    # If we still couldn't parse, give up.
+    return None
+
 
 
 def fetch_ai_assessment(api_key, query, domains):
