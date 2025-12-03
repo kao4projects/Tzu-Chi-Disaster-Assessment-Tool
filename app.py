@@ -164,7 +164,7 @@ def fetch_ai_assessment(api_key, query):
         model = genai.GenerativeModel("gemini-2.5-flash")
         
         # We define the tool config to enable Google Search
-        tool_config = {'google_search_retrieval': {}}
+        tool_config = {'google_search': {}}
         
         full_prompt = f"{SYSTEM_PROMPT}\n\nUSER QUERY: {query}"
         
