@@ -8,7 +8,7 @@ import time
 
 # --- 1. CONFIGURATION ---
 st.set_page_config(page_title="Tzu Chi Disaster Tool", layout="wide")
-st.title("Tzu Chi Global Disaster Assessment Tool (Deep Search v3)")
+st.title("Tzu Chi Global Disaster Assessment Tool (Deep Search v3 - Hierarchical)")
 
 # --- 2. API KEY SETUP ---
 if "GOOGLE_API_KEY" in st.secrets:
@@ -56,19 +56,22 @@ for cat, indicators in SCORING_FRAMEWORK.items():
     for name, weight in indicators.items():
         FLAT_WEIGHTS[name] = weight
 
-# --- 4. SYSTEM PROMPT (AGGRESSIVE RESEARCH MODE) ---
+# --- 4. SYSTEM PROMPT (STRICT HIERARCHY MODE) ---
 SYSTEM_PROMPT = """
 You are the Lead Researcher for the 'Tzu Chi Disaster Assessment Unit'.
-Your task is to find SPECIFIC NUMBERS and SOURCES for a humanitarian disaster.
+Your task is to find SPECIFIC NUMBERS and SOURCES for a humanitarian disaster following a STRICT search hierarchy.
 
+### SEARCH HIERARCHY (MANDATORY):
+You must prioritize data extraction in this exact order. If data is found in Tier 1, use it. If not, move to Tier 2.
+1. **TIER 1 (OFFICIAL):** UN OCHA (unocha.org) - Look for "Situation Reports" or "Flash Updates".
+2. **TIER 2 (HUMANITARIAN):** ReliefWeb (reliefweb.int) - Look for assessments and NGO reports.
+3. **TIER 3 (VERIFIED NEWS):** BBC (bbc.com) and Reuters (reuters.com).
+4. **TIER 4 (OTHER):** Other reputable local media or international outlets.
 
 ### RESEARCH PROTOCOL:
-STRICT SOURCE RULES:
-- Use ONLY: OCHA, ReliefWeb, UN bodies (WHO, UNICEF, WFP), EU/ECHO, ACAPS, CNN, BBC, Reuters.
-- Prioritise data from the last 7-30 days.
-- If numbers conflict, choose the conservative/high-risk estimate.
-**Handle Uncertain Data:** If exact official figures are not yet released, YOU MUST REPORT THE ESTIMATES found in news (e.g., "Reports indicate >300 dead" is better than "Unknown").
-**Source Triangulation:** For every data point, try to find 2-3 sources (e.g., ReliefWeb, Major News Outlet, UN).
+- **Query Strategy:** When searching, actively include site operators or specific terms (e.g., "Cyclone Ditwah Sri Lanka site:unocha.org").
+- **Handle Uncertain Data:** If exact official figures are not yet released, YOU MUST REPORT THE ESTIMATES found in Tier 3/4 sources (e.g., "BBC reports >300 dead" is better than "Unknown").
+- **Source Triangulation:** For every data point, provide the specific source URL.
 
 ### OUTPUT FORMAT (JSON ONLY):
 {
@@ -89,7 +92,7 @@ STRICT SOURCE RULES:
       "score": 1-5, 
       "extracted_value": "The specific number found (e.g., '1.4 million')",
       "justification": "Why this score? (e.g., >1M is Critical)",
-      "source_urls": ["url1", "url2", "url3"]
+      "source_urls": ["url1", "url2"]
     },
     ... (Repeat for ALL 19 indicators) ...
   }
@@ -115,17 +118,17 @@ def calculate_final_metrics(scores_dict):
     if severity_score >= 4.0:
         category = "A"
         label = "Major International"
-        action = "IMMEDIATE MOBILISATION: Initiate assessment, Inventory Stocktake, Daily Briefing to Executives, Contact international partners."
+        action = "IMMEDIATE MOBILISATION: Initiate assessment, Stocktake on Inventory & Emergency funds, Contact international partners."
         color = "#ff4b4b" # Red
     elif severity_score >= 2.5:
         category = "B"
         label = "Medium Scale"
-        action = "WATCH LIST: Maintain contact with local partners, Monitor for 48h."
+        action = "WATCH LIST: Maintain contact with local partners, Monitor developments for 72h."
         color = "#ffa421" # Orange
     else:
         category = "C"
         label = "Local / Minimal"
-        action = "MONITORING: No HQ deployment likely needed, Pray and Observe."
+        action = "MONITORING: No HQ deployment likely needed, Pray & Monitor."
         color = "#09ab3b" # Green
         
     return {
@@ -155,8 +158,10 @@ def fetch_ai_assessment(api_key, query):
     try:
         client = genai.Client(api_key=api_key)
         
-        # 1. Primary Search Prompt
-        full_prompt = f"{SYSTEM_PROMPT}\n\nUSER QUERY: {query}\n\nIMPORTANT: If the event is in the future (e.g. 2025), search for it as if it is happening NOW. Do not say 'it hasn't happened yet'."
+        # 1. Primary Search Prompt - ENHANCED with explicit domain bias
+        # We append the hierarchy to the user query to 'nudge' the search tool
+        bias_instruction = "Focus research on: unocha.org, reliefweb.int, bbc.com, reuters.com"
+        full_prompt = f"{SYSTEM_PROMPT}\n\nUSER QUERY: {query}. {bias_instruction}.\n\nIMPORTANT: If the event is in the future (e.g. 2025), search for it as if it is happening NOW. Do not say 'it hasn't happened yet'."
         
         # Tools configuration (Google Search enabled)
         tool_config = types.GenerateContentConfig(
@@ -186,10 +191,6 @@ def fetch_ai_assessment(api_key, query):
         # 3. Parse Data
         data = robust_json_extractor(response.text)
         
-        # 4. (Optional) Validation - Check if we got "Unknown"
-        # If 'fatalities' is unknown, we could theoretically trigger a second specific prompt here.
-        # For this version, we trust the "Aggressive Search" prompt.
-        
         return data
         
     except Exception as e:
@@ -208,7 +209,7 @@ if "current_scores" not in st.session_state:
     st.session_state.current_scores = {}
 
 if run_btn and query:
-    with st.spinner("🔍 Accessing ReliefWeb, OCHA & Local News... (15-20s)"):
+    with st.spinner("🔍 Accessing OCHA, ReliefWeb & Reuters... (15-20s)"):
         data = fetch_ai_assessment(api_key, query)
         
         if data:
