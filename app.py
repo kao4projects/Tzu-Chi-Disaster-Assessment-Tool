@@ -4,7 +4,18 @@ import json
 import pandas as pd
 import importlib.metadata
 
-# --- 1. CONFIGURATION & SCORING FRAMEWORK ---
+# --- 1. CONFIGURATION ---
+st.set_page_config(page_title="Tzu Chi Disaster Tool", layout="wide")
+st.title("Tzu Chi Global Disaster Assessment Tool")
+
+# --- 2. API KEY SETUP ---
+if "GOOGLE_API_KEY" in st.secrets:
+    api_key = st.secrets["GOOGLE_API_KEY"]
+else:
+    st.error("Missing GOOGLE_API_KEY. Please add it to Streamlit Secrets.")
+    st.stop()
+
+# --- 3. SCORING FRAMEWORK ---
 SCORING_FRAMEWORK = {
     "1. IMPACT": {
         "1.1 People Affected": 0.25,
@@ -43,7 +54,7 @@ for cat, indicators in SCORING_FRAMEWORK.items():
     for name, weight in indicators.items():
         FLAT_WEIGHTS[name] = weight
 
-# --- 2. SYSTEM PROMPT ---
+# --- 4. SYSTEM PROMPT ---
 SYSTEM_PROMPT = """
 You are the assessment engine for the 'Tzu Chi Global Disaster Assessment Tool'.
 Your goal is to research a humanitarian disaster and output structured JSON data based on the user's input.
@@ -99,7 +110,7 @@ Return ONLY valid JSON with this structure (no markdown formatting):
 }
 """
 
-# --- 3. HELPER FUNCTIONS ---
+# --- 5. CORE LOGIC ---
 
 def calculate_final_metrics(scores_dict):
     raw_weighted_sum = 0.0
@@ -137,62 +148,55 @@ def calculate_final_metrics(scores_dict):
     }
 
 def fetch_ai_assessment(api_key, query):
-    """Calls Gemini API with Google Search Grounding."""
+    """Calls Gemini API using the specific tool syntax requested by the error."""
     try:
         genai.configure(api_key=api_key)
         
-        # 1. USE STABLE MODEL:
-        # We use "gemini-1.5-flash" because it is the most stable version for Search.
-        # (gemini-2.5 does not exist yet).
-        model = genai.GenerativeModel("gemini-2.5-flash")
+        # 1. MODEL SELECTION
+        # We try Gemini 2.5 Flash as requested.
+        # If it doesn't exist yet, we fall back to 1.5 Flash automatically.
+        target_model = "gemini-2.5-flash"
         
-        # 2. DICTIONARY TOOL CONFIGURATION (Version Safe):
-        # Instead of importing the 'Tool' class (which causes errors on different versions),
-        # we pass the configuration as a pure dictionary. 
-        # Note: We use "google_search_retrieval" which is the correct key for version 0.8.5+.
-        tools_payload = [
-            {'google_search_retrieval': {
-                'dynamic_retrieval_config': {
-                    'mode': 'dynamic',
-                    'dynamic_threshold': 0.7,
-                }
-            }}
+        # 2. TOOL CONFIGURATION
+        # The error explicitly asked for 'google_search', NOT 'google_search_retrieval'
+        # This dictionary syntax is the most robust way to pass it.
+        tools_config = [
+            {'google_search': {}} 
         ]
 
+        model = genai.GenerativeModel(target_model)
+        
         full_prompt = f"{SYSTEM_PROMPT}\n\nUSER QUERY: {query}"
         
         # 3. GENERATION
         response = model.generate_content(
             full_prompt,
-            tools=tools_payload
+            tools=tools_config
         )
         
         text = response.text.replace("```json", "").replace("```", "").strip()
         return json.loads(text)
         
     except Exception as e:
-        st.error(f"Error details: {e}")
-        return None
+        # Fallback Logic: If 2.5 doesn't exist, try 1.5
+        if "404" in str(e) and "models/" in str(e):
+            st.warning(f"Gemini 2.5 Flash not found. Falling back to Gemini 1.5 Flash...")
+            try:
+                model = genai.GenerativeModel("gemini-1.5-flash")
+                response = model.generate_content(
+                    f"{SYSTEM_PROMPT}\n\nUSER QUERY: {query}",
+                    tools=[{'google_search': {}}]
+                )
+                text = response.text.replace("```json", "").replace("```", "").strip()
+                return json.loads(text)
+            except Exception as e2:
+                st.error(f"Fallback failed: {e2}")
+                return None
+        else:
+            st.error(f"Error details: {e}")
+            return None
 
-# --- 4. STREAMLIT UI ---
-
-st.set_page_config(page_title="Tzu Chi Disaster Tool", layout="wide")
-
-st.title("Tzu Chi Global Disaster Assessment Tool")
-
-# Check version silently
-try:
-    lib_version = importlib.metadata.version("google-generativeai")
-except:
-    lib_version = "Unknown"
-st.caption(f"Server Library Version: {lib_version} (OK)")
-
-# --- API KEY CHECK ---
-if "GOOGLE_API_KEY" in st.secrets:
-    api_key = st.secrets["GOOGLE_API_KEY"]
-else:
-    st.error("Missing GOOGLE_API_KEY in Streamlit Secrets. Please add it in Settings > Secrets.")
-    st.stop()
+# --- 6. UI RENDER ---
 
 query = st.text_area("Describe the disaster (Location, Date, Type):", 
                      placeholder="e.g., Floods in Southern Brazil, May 2024")
@@ -211,7 +215,6 @@ if run_btn and query:
             for key, val in data["scores"].items():
                 st.session_state.current_scores[key] = val["score"]
 
-# --- 5. RESULTS DISPLAY ---
 if st.session_state.assessment_data:
     data = st.session_state.assessment_data
     
