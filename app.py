@@ -8,7 +8,7 @@ import time
 
 # --- 1. CONFIGURATION ---
 st.set_page_config(page_title="Tzu Chi Disaster Tool", layout="wide")
-st.title("Tzu Chi Global Disaster Assessment Tool (v6: Source Control)")
+st.title("Tzu Chi Global Disaster Assessment Tool (v7: Comprehensive)")
 
 # --- 2. API KEY SETUP ---
 if "GOOGLE_API_KEY" in st.secrets:
@@ -20,33 +20,19 @@ else:
 # --- 3. SIDEBAR: SOURCE CONTROL ---
 with st.sidebar:
     st.header("Research Settings")
-    st.caption("Control where the AI looks for information.")
+    st.caption("Control search strictness.")
     
-    # Pre-defined high-trust domains
     DEFAULT_DOMAINS = [
-        "reliefweb.int",
-        "unocha.org",
-        "bbc.com",
-        "reuters.com",
-        "aljazeera.com",
-        "news.un.org",   
-        "cnn.com", 
-        "euronews.com",
-        "apnews.com"
+        "reliefweb.int", "unocha.org", "bbc.com", "reuters.com", 
+        "aljazeera.com", "news.un.org", "cnn.com", "apnews.com"
     ]
     
     selected_domains = st.multiselect(
-        "Allowed Domains:",
+        "Preferred Sources (for highlighting):",
         options=DEFAULT_DOMAINS,
-        default=DEFAULT_DOMAINS[:4] # Default to first 4
+        default=DEFAULT_DOMAINS[:5]
     )
     
-    # Custom domain input
-    custom_domain = st.text_input("Add Custom Domain (e.g., cnn.com):")
-    if custom_domain and custom_domain not in selected_domains:
-        selected_domains.append(custom_domain)
-        
-    strict_mode = st.checkbox("Strict Mode (Limit search ONLY to these sites)", value=False)
 
 # --- 4. SCORING FRAMEWORK ---
 SCORING_FRAMEWORK = {
@@ -87,40 +73,47 @@ for cat, indicators in SCORING_FRAMEWORK.items():
     for name, weight in indicators.items():
         FLAT_WEIGHTS[name] = weight
 
-# --- 5. SYSTEM PROMPT ---
+# --- 5. SYSTEM PROMPT (ENHANCED FOR QUALITATIVE INFERENCE) ---
 SYSTEM_PROMPT = """
-You are the Lead Researcher for the 'Tzu Chi Disaster Assessment Unit'.
-Your task is to find SPECIFIC NUMBERS and SOURCES for a disaster.
+You are the Senior Analyst for the 'Tzu Chi Disaster Assessment Unit'. 
+Your goal is to provide a COMPREHENSIVE Situation Analysis, not just numbers.
 
-### RESEARCH PROTOCOL:
-1. **Source Compliance:** You have been given a specific list of trusted domains. PRIORITIZE data from these sources.
-2. **Extraction Rules:**
-   - Report the **Highest Reported Estimate** if numbers conflict.
-   - If a source says "Hundreds feared dead", report **"Hundreds (Est.)"**.
-   - **NEVER** return "Unknown" if there are news reports. Dig out the numbers.
+### CORE INSTRUCTIONS:
+1. **QUALITATIVE INFERENCE (CRITICAL):** - Breaking news often lacks exact numbers. You MUST infer severity from descriptive text.
+   - Example: "Villages washed away" -> Implies High Housing Damage (Score 5) even if no house count exists.
+   - Example: "People trapped on roofs" -> Implies Critical Displacement (Score 5).
+   - **DO NOT default to 'Unknown' or Score 1 if the text describes chaos.**
+
+2. **DATA EXTRACTION:**
+   - If exact figures (Fatalities, Affected) are missing, look for *estimates* like "dozens", "hundreds", "thousands".
+   - Use the highest reported credible estimate (Conservative Risk Principle).
+
+3. **OUTPUT:**
+   - **Justification:** Must be a full sentence explaining *why* you gave that score based on the text found.
+   - **Extracted Value:** If no number, put the *descriptive phrase* found (e.g., "Widespread destruction reported").
 
 ### OUTPUT FORMAT (JSON ONLY):
 {
   "summary": {
     "title": "Crisis Name",
     "country": "Country",
-    "date": "Date of Event",
-    "description": "3-4 sentence summary."
+    "date": "Date",
+    "description": "Detailed 4-5 sentence executive summary."
   },
   "key_figures": {
-    "affected": {"value": "e.g. 1.2 million", "source_url": "url..."},
-    "fatalities": {"value": "e.g. 350 confirmed", "source_url": "url..."},
-    "displaced": {"value": "e.g. 15,000 in shelters", "source_url": "url..."},
-    "in_need": {"value": "e.g. 300,000", "source_url": "url..."}
+    "affected": {"value": "e.g. >50,000 (est)", "source_url": "url"},
+    "fatalities": {"value": "e.g. 12 confirmed", "source_url": "url"},
+    "displaced": {"value": "e.g. 2,000 in camps", "source_url": "url"},
+    "in_need": {"value": "e.g. Unknown (Assessment ongoing)", "source_url": "url"}
   },
   "scores": {
     "1.1 People Affected": {
       "score": 1-5, 
-      "extracted_value": "The specific number found",
-      "justification": "Rationale",
-      "source_urls": ["url1", "url2"]
+      "extracted_value": "e.g. 'Whole district flooded'",
+      "justification": "e.g. Reports indicate entire district under water, implying high affected count.",
+      "source_urls": ["url1"]
     },
-    ... (Repeat for ALL 19 indicators) ...
+    ... (Repeat for ALL indicators) ...
   }
 }
 """
@@ -168,34 +161,30 @@ def robust_json_extractor(text):
         text_trimmed = text[start_idx:]
         obj, _ = json.JSONDecoder().raw_decode(text_trimmed)
         return obj
-    except Exception as e:
+    except Exception:
         return None
 
 def fetch_ai_assessment(api_key, query, domains, strict):
-    """
-    Calls Gemini API with Domain Injection.
-    """
     try:
         client = genai.Client(api_key=api_key)
         
-        # --- DOMAIN LOGIC ---
-        # We construct a search string like: "Cyclone Ditwah Sri Lanka (site:reliefweb.int OR site:bbc.com ...)"
-        if domains:
+        # --- SMART SEARCH QUERY CONSTRUCTION ---
+        if strict:
+            # STRICT: Forces Google to ONLY look at specific sites. 
+            # Risk: Returns 0 results if event is too new.
             site_operators = " OR ".join([f"site:{d}" for d in domains])
-            if strict:
-                # STRICT: We append the sites and tell the model to ONLY use them
-                domain_instruction = f"Search specifically using these sources: ({site_operators})"
-            else:
-                # LOOSE: We prefer them but allow others if needed
-                domain_instruction = f"Prioritize information from: {', '.join(domains)}"
+            search_query = f"{query} ({site_operators})"
+            bias_instruction = "Strictly use data from the search results from these domains."
         else:
-            domain_instruction = "Search trusted humanitarian and local news sources."
+            # OPEN (Recommended): Searches the whole web for keywords.
+            # This finds local news, Twitter aggregators, etc.
+            search_query = f"{query} latest humanitarian impact death toll damage assessment"
+            bias_instruction = f"Prioritize sources like {', '.join(domains[:3])}, but use ANY credible local news source if official reports are missing."
 
         full_prompt = (
             f"{SYSTEM_PROMPT}\n\n"
             f"USER QUERY: {query}\n"
-            f"DOMAIN CONTROLS: {domain_instruction}\n"
-            "INSTRUCTION: Find the LATEST death toll, affected numbers, and damage assessments."
+            f"SEARCH CONTEXT: {bias_instruction}\n"
         )
         
         tool_config = types.GenerateContentConfig(
@@ -204,26 +193,26 @@ def fetch_ai_assessment(api_key, query, domains, strict):
         )
 
         try:
+            # Pass the constructed 'search_query' implicitly via the prompt context
+            # The model uses the tool with its own formulated query, but we guide it.
             response = client.models.generate_content(
                 model='gemini-2.0-flash',
                 contents=full_prompt,
                 config=tool_config
             )
         except Exception:
-            st.warning("Gemini 2.0 Flash busy, falling back to 1.5 Flash...")
             response = client.models.generate_content(
                 model='gemini-1.5-flash',
                 contents=full_prompt,
                 config=tool_config
             )
 
-        # Robust Metadata Extraction
+        # Extract Sources for Debugging
         debug_sources = []
         try:
             if (response.candidates and 
                 response.candidates[0].grounding_metadata and 
                 response.candidates[0].grounding_metadata.grounding_chunks):
-                
                 for chunk in response.candidates[0].grounding_metadata.grounding_chunks:
                     if chunk.web:
                         debug_sources.append(f"{chunk.web.title}: {chunk.web.uri}")
@@ -254,11 +243,7 @@ if "current_scores" not in st.session_state:
     st.session_state.current_scores = {}
 
 if run_btn and query:
-    # Display the domains being searched
-    if selected_domains:
-        st.caption(f"Searching across: {', '.join(selected_domains)}")
-        
-    with st.spinner("🔍 Researching..."):
+    with st.spinner("🔍 Scanning Global & Local Sources..."):
         data, sources = fetch_ai_assessment(api_key, query, selected_domains, strict_mode)
         
         if data:
@@ -267,7 +252,7 @@ if run_btn and query:
             for key, val in data.get("scores", {}).items():
                 st.session_state.current_scores[key] = val.get("score", 3)
         else:
-            st.error("Failed to retrieve data.")
+            st.error("Failed to retrieve data. Please check connection or try a broader query.")
 
 if st.session_state.assessment_data:
     data = st.session_state.assessment_data
@@ -275,13 +260,11 @@ if st.session_state.assessment_data:
     # --- HEADER ---
     st.divider()
     col1, col2 = st.columns([2, 1])
-    
     with col1:
         st.title(f"{data['summary']['title']}")
         st.caption(f"📍 {data['summary']['country']} | 📅 {data['summary']['date']}")
-        st.success(data['summary']['description'])
+        st.info(data['summary']['description'])
         
-    # --- KEY FIGURES SECTION ---
     with col2:
         st.subheader("Key Figures")
         kf = data.get('key_figures', {})
@@ -301,14 +284,11 @@ if st.session_state.assessment_data:
         c1, c2 = st.columns(2)
         c1.metric("Affected", aff_val)
         if aff_url != '#': c1.markdown(f"[Source]({aff_url})")
-        
         c2.metric("Fatalities", fat_val)
         if fat_url != '#': c2.markdown(f"[Source]({fat_url})")
-        
         c3, c4 = st.columns(2)
         c3.metric("Displaced", disp_val)
         if disp_url != '#': c3.markdown(f"[Source]({disp_url})")
-        
         c4.metric("In Need", need_val)
         if need_url != '#': c4.markdown(f"[Source]({need_url})")
 
@@ -329,27 +309,19 @@ if st.session_state.assessment_data:
 
                 with st.container():
                     c1, c2, c3 = st.columns([2, 4, 1])
-                    
                     with c1:
                         st.markdown(f"**{indicator_name}**")
                         st.caption(f"Weight: {weight}")
-                        
                     with c2:
-                        if "Unknown" in str(ai_value):
-                             st.markdown(f"**Evidence:** `{ai_value}`", help="AI could not find exact number")
-                        else:
-                             st.markdown(f"**Evidence:** `{ai_value}`")
-                        
+                        # Logic to display text even if no number
+                        st.markdown(f"**Evidence:** `{ai_value}`")
                         st.write(f"_{ai_just}_")
                         
                         if ai_urls and isinstance(ai_urls, list):
                             links_md = " | ".join([f"[Source {j+1}]({url})" for j, url in enumerate(ai_urls) if url])
-                            st.markdown(f"🔗 Found in: {links_md}")
+                            st.markdown(f"🔗 {links_md}")
                         elif isinstance(ai_urls, str):
                             st.markdown(f"[Source]({ai_urls})")
-                        else:
-                            st.caption("No direct links returned.")
-
                     with c3:
                         current_val = st.session_state.current_scores.get(indicator_name, ai_score)
                         new_val = st.slider(
@@ -358,14 +330,11 @@ if st.session_state.assessment_data:
                             label_visibility="collapsed"
                         )
                         st.session_state.current_scores[indicator_name] = new_val
-                    
                     st.divider()
 
     # --- FINAL RESULTS ---
     metrics = calculate_final_metrics(st.session_state.current_scores)
-    
     st.header("Final Assessment")
-    
     m1, m2, m3 = st.columns(3)
     m1.metric("Tzu Chi Severity Score", f"{metrics['severity']} / 5.0")
     m2.metric("INFORM Equivalent", f"{metrics['inform']} / 10.0")
@@ -377,11 +346,11 @@ if st.session_state.assessment_data:
         <p style="font-size: 1.2em; margin-top: 10px;"><strong>ACTION: {metrics['action']}</strong></p>
     </div>
     """, unsafe_allow_html=True)
-    
+
     with st.expander("Search Debugger (View Sources)"):
         if st.session_state.debug_sources:
-            st.write("Sources found by AI:")
+            st.write("Sources used:")
             for src in st.session_state.debug_sources:
                 st.write(f"- {src}")
         else:
-            st.info("No external links were returned by the search tool.")
+            st.info("No direct links returned. AI inferred data from general search context.")
