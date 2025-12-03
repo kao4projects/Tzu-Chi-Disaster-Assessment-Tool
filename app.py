@@ -161,31 +161,31 @@ def fetch_ai_assessment(api_key, query):
     try:
         genai.configure(api_key=api_key)
         
-        # Use the specific -001 model version for stability
-        model = genai.GenerativeModel("gemini-2.5-flash")
+        # 1. Use the correct model name (Likely 1.5-flash or 2.0-flash-exp)
+        # We use 'gemini-1.5-flash-002' as it is the stable production version.
+        model = genai.GenerativeModel("gemini-1.5-flash-002")
         
-        # ROBUST FIX: Construct the tool using the explicit object type
-        # This prevents the "Unknown field" and "FunctionDeclaration" errors
-        google_search_tool = Tool(
+        # 2. Define the Search Tool explicitly using the class constructor
+        # This fixes the "Unknown field" / "FunctionDeclaration" error
+        search_tool = Tool(
             google_search_retrieval=GoogleSearchRetrieval(
-                dynamic_retrieval_config=None  # Use default settings
+                dynamic_retrieval_config=None 
             )
         )
         
         full_prompt = f"{SYSTEM_PROMPT}\n\nUSER QUERY: {query}"
         
-        # Pass the tool object in a list
+        # 3. Pass the tool object
         response = model.generate_content(
             full_prompt,
-            tools=[google_search_tool]
+            tools=[search_tool]
         )
         
-        # Clean up the response text
+        # 4. Clean up response
         text = response.text.replace("```json", "").replace("```", "").strip()
         return json.loads(text)
         
     except Exception as e:
-        # Detailed error logging
         st.error(f"Error details: {e}")
         return None
 
