@@ -404,26 +404,28 @@ def fetch_ai_assessment(api_key, query, domains):
             f"TARGET SOURCES: {domain_list_str}\n"
             "INSTRUCTION: Find the LATEST data. Use descriptive text to infer scores if numbers are missing."
         )
-tool_config = types.GenerateContentConfig(
-    tools=[types.Tool(google_search=types.GoogleSearch())],
-    generation_config=types.GenerationConfig(
-        response_mime_type="application/json",
-    ),
-)
 
-# Try 2.5 then fall back to 2.0
-try:
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=full_prompt,
-        config=tool_config,
-    )
-except Exception:
-    response = client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=full_prompt,
-        config=tool_config,
-    )
+        # ----- NEW: force JSON output -----
+        tool_config = types.GenerateContentConfig(
+            tools=[types.Tool(google_search=types.GoogleSearch())],
+            generation_config=types.GenerationConfig(
+                response_mime_type="application/json",
+            ),
+        )
+
+        # Try 2.5 then fall back to 2.0
+        try:
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=full_prompt,
+                config=tool_config,
+            )
+        except Exception:
+            response = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=full_prompt,
+                config=tool_config,
+            )
 
         # ---------- Extract URLs from grounding metadata ----------
         valid_urls = []
@@ -447,7 +449,7 @@ except Exception:
         if not raw_text_debug:
             return None, valid_urls, "Model response contained no text (possibly tool-only call)."
 
-        # ---------- Parse JSON (lenient) ----------
+        # ---------- Parse JSON ----------
         data = robust_json_extractor(raw_text_debug)
         if data is None:
             snippet = raw_text_debug[:1200]
@@ -462,6 +464,7 @@ except Exception:
 
     except Exception as e:
         return None, [], f"Exception in fetch_ai_assessment: {e!r}"
+
 
 
 # --- 7. UI RENDER ---
