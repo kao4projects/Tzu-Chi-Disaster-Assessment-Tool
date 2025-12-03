@@ -8,7 +8,7 @@ import time
 
 # --- 1. CONFIGURATION ---
 st.set_page_config(page_title="Tzu Chi Disaster Tool", layout="wide")
-st.title("Tzu Chi Global Disaster Assessment Tool (v5: Breaking News Mode)")
+st.title("Tzu Chi Global Disaster Assessment Tool (v5.1: Stable)")
 
 # --- 2. API KEY SETUP ---
 if "GOOGLE_API_KEY" in st.secrets:
@@ -62,8 +62,8 @@ You are the Lead Researcher for the 'Tzu Chi Disaster Assessment Unit'.
 Your task is to find SPECIFIC NUMBERS and SOURCES for a real-time, unfolding disaster.
 
 ### BREAKING NEWS PROTOCOL:
-The user states this is a **REAL, UNFOLDING EVENT**. 
-1. **Search Hierarchy:** Prioritize OCHA > ReliefWeb > Reuters/BBC or Search broadly on major news outlets.
+The user states this is a **REAL, UNFOLDING EVENT**. Official UN reports (OCHA/ReliefWeb) may not exist yet.
+1. **Search Strategy:** Search BROADLY. Do not restrict to UN sites. Look for local news (e.g., "Daily Mirror Sri Lanka", "Ada Derana", "Newsfirst.lk").
 2. **Prioritize Recency:** Value "Live Updates" and articles from the last 24 hours over older "verified" reports.
 3. **Extraction Rules:**
    - If exact numbers are conflicting, report the **Highest Reported Estimate** (conservative approach for disaster relief).
@@ -155,21 +155,17 @@ def fetch_ai_assessment(api_key, query):
     try:
         client = genai.Client(api_key=api_key)
         
-        # 1. Broad Search Query (Removing strict 'site:' operators to catch breaking news)
         full_prompt = (
             f"{SYSTEM_PROMPT}\n\n"
             f"USER QUERY: {query}\n"
             "SEARCH INSTRUCTION: Search for local Sri Lankan news (Daily Mirror, Ada Derana) and global wires (Reuters) for the LATEST death toll and damage assessments."
         )
         
-        # Tools configuration (Google Search enabled)
         tool_config = types.GenerateContentConfig(
             tools=[types.Tool(google_search=types.GoogleSearch())],
             response_mime_type="application/json"
         )
 
-        # 2. Execute Call
-        # We prefer gemini-2.0-flash for better search capabilities
         try:
             response = client.models.generate_content(
                 model='gemini-2.0-flash',
@@ -184,19 +180,23 @@ def fetch_ai_assessment(api_key, query):
                 config=tool_config
             )
 
-        # DEBUG: Store the raw grounding metadata to see what URLs it found
+        # --- FIX: ROBUST GROUNDING METADATA EXTRACTION ---
         debug_sources = []
-        if response.candidates and response.candidates[0].grounding_metadata:
-            for chunk in response.candidates[0].grounding_metadata.grounding_chunks:
-                if chunk.web:
-                    debug_sources.append(f"{chunk.web.title}: {chunk.web.uri}")
+        try:
+            if (response.candidates and 
+                response.candidates[0].grounding_metadata and 
+                response.candidates[0].grounding_metadata.grounding_chunks):
+                
+                for chunk in response.candidates[0].grounding_metadata.grounding_chunks:
+                    if chunk.web:
+                        debug_sources.append(f"{chunk.web.title}: {chunk.web.uri}")
+        except Exception:
+            pass # Fail silently on debug data if structure changes
 
         if not response.text:
             return None, debug_sources
 
-        # 3. Parse Data
         data = robust_json_extractor(response.text)
-        
         return data, debug_sources
         
     except Exception as e:
@@ -223,7 +223,6 @@ if run_btn and query:
         if data:
             st.session_state.assessment_data = data
             st.session_state.debug_sources = sources
-            # Pre-load scores
             for key, val in data.get("scores", {}).items():
                 st.session_state.current_scores[key] = val.get("score", 3)
         else:
@@ -246,7 +245,6 @@ if st.session_state.assessment_data:
         st.subheader("Key Figures")
         kf = data.get('key_figures', {})
         
-        # Helper to format key figure display
         def fmt_kf(kf_data):
             if isinstance(kf_data, dict):
                 val = kf_data.get('value', 'Unknown')
@@ -259,7 +257,6 @@ if st.session_state.assessment_data:
         disp_val, disp_url = fmt_kf(kf.get('displaced', {}))
         need_val, need_url = fmt_kf(kf.get('in_need', {}))
 
-        # Custom metrics
         c1, c2 = st.columns(2)
         c1.metric("Affected", aff_val)
         if aff_url != '#': c1.markdown(f"[Source]({aff_url})")
@@ -283,14 +280,12 @@ if st.session_state.assessment_data:
     for i, (dim_name, indicators) in enumerate(SCORING_FRAMEWORK.items()):
         with tabs[i]:
             for indicator_name, weight in indicators.items():
-                # Get AI Data
                 ai_data = data["scores"].get(indicator_name, {})
                 ai_score = ai_data.get("score", 3)
                 ai_value = ai_data.get("extracted_value", "No specific data point found.")
                 ai_just = ai_data.get("justification", "No justification provided.")
                 ai_urls = ai_data.get("source_urls", [])
 
-                # UI Layout for each Row
                 with st.container():
                     c1, c2, c3 = st.columns([2, 4, 1])
                     
@@ -299,7 +294,6 @@ if st.session_state.assessment_data:
                         st.caption(f"Weight: {weight}")
                         
                     with c2:
-                        # Highlight the extracted value
                         if "Unknown" in str(ai_value):
                              st.markdown(f"**Evidence:** `{ai_value}`", help="AI could not find exact number")
                         else:
@@ -307,7 +301,6 @@ if st.session_state.assessment_data:
                         
                         st.write(f"_{ai_just}_")
                         
-                        # Render Sources as multiple links
                         if ai_urls and isinstance(ai_urls, list):
                             links_md = " | ".join([f"[Source {j+1}]({url})" for j, url in enumerate(ai_urls) if url])
                             st.markdown(f"🔗 Found in: {links_md}")
@@ -317,7 +310,6 @@ if st.session_state.assessment_data:
                             st.caption("No direct links returned.")
 
                     with c3:
-                        # Slider for manual override
                         current_val = st.session_state.current_scores.get(indicator_name, ai_score)
                         new_val = st.slider(
                             "Score", 1, 5, int(current_val),
@@ -345,7 +337,6 @@ if st.session_state.assessment_data:
     </div>
     """, unsafe_allow_html=True)
     
-    # --- DEBUG SECTION ---
     with st.expander("Search Debugger (If results are empty, check here)"):
         if st.session_state.debug_sources:
             st.write("Google Search actually returned these sources:")
