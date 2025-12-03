@@ -3,6 +3,7 @@ from google import genai
 from google.genai import types
 import json
 import pandas as pd
+import re
 
 # --- 1. CONFIGURATION ---
 st.set_page_config(page_title="Tzu Chi Disaster Tool", layout="wide")
@@ -147,26 +148,48 @@ def calculate_final_metrics(scores_dict):
         "color": color
     }
 
+def clean_and_parse_json(text):
+    """
+    Robustly extracts JSON from a string by finding the first '{' and last '}'.
+    Fixes 'Extra data' errors.
+    """
+    try:
+        # 1. Try direct parse first
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    try:
+        # 2. Extract substring from first { to last }
+        start = text.find('{')
+        end = text.rfind('}')
+        
+        if start != -1 and end != -1 and end > start:
+            json_str = text[start : end + 1]
+            return json.loads(json_str)
+        else:
+            raise ValueError("No valid JSON object found in response.")
+    except Exception as e:
+        st.error(f"JSON Parsing Error: {e}")
+        st.code(text) # Show raw text for debugging
+        return None
+
 def fetch_ai_assessment(api_key, query):
     """Calls Gemini API using the NEW v1.0 SDK (google-genai)."""
     try:
-        # 1. INITIALIZE CLIENT (v1.0 Style)
         client = genai.Client(api_key=api_key)
-
         full_prompt = f"{SYSTEM_PROMPT}\n\nUSER QUERY: {query}"
         
-        # 2. GENERATE CONTENT WITH SEARCH TOOL
-        # In v1.0, tools are passed inside the `config` parameter.
-        # We use 'gemini-2.0-flash' as the primary model.
+        # We try gemini-2.0-flash first
         try:
             response = client.models.generate_content(
                 model='gemini-2.0-flash',
                 contents=full_prompt,
                 config=types.GenerateContentConfig(
                     tools=[types.Tool(
-                        google_search=types.GoogleSearch() # Enable Grounding/Search
+                        google_search=types.GoogleSearch()
                     )],
-                    response_mime_type="application/json" # Enforce JSON output
+                    response_mime_type="application/json"
                 )
             )
         except Exception as e:
@@ -182,22 +205,14 @@ def fetch_ai_assessment(api_key, query):
                 )
             )
         
-        # 3. PARSE RESPONSE
-        # v1.0 returns a parsed object if response_mime_type is JSON,
-        # but depending on the exact version, it might still need text parsing.
-        # We'll use response.text to be safe and parse manually.
-        text = response.text
-        
-        # Clean up Markdown if present (sometimes happens even with JSON mode)
-        if "```json" in text:
-            text = text.replace("```json", "").replace("```", "")
-        elif "```" in text:
-             text = text.replace("```", "")
-             
-        return json.loads(text.strip())
+        if response.text:
+            return clean_and_parse_json(response.text)
+        else:
+            st.error("Empty response from model.")
+            return None
         
     except Exception as e:
-        st.error(f"Error details: {e}")
+        st.error(f"API Error details: {e}")
         return None
 
 # --- 6. UI RENDER ---
@@ -249,19 +264,23 @@ if st.session_state.assessment_data:
     for i, (dim_name, indicators) in enumerate(SCORING_FRAMEWORK.items()):
         with tabs[i]:
             for indicator_name, weight in indicators.items():
-                ai_score_obj = data["scores"].get(indicator_name, {"score": 3, "justification": "No data"})
-                ai_val = ai_score_obj["score"]
-                justification = ai_score_obj["justification"]
+                # Safety check in case model misses a key
+                default_score = {"score": 3, "justification": "No data"}
+                ai_score_obj = data["scores"].get(indicator_name, default_score)
+                
+                ai_val = ai_score_obj.get("score", 3)
+                justification = ai_score_obj.get("justification", "No justification provided.")
                 
                 c1, c2 = st.columns([3, 1])
                 with c1:
                     st.markdown(f"**{indicator_name}** (Weight: {weight})")
                     st.caption(f"AI Justification: {justification}")
                 with c2:
+                    current_val = st.session_state.current_scores.get(indicator_name, ai_val)
                     new_val = st.slider(
                         "Score", 
                         1, 5, 
-                        int(st.session_state.current_scores.get(indicator_name, ai_val)),
+                        int(current_val),
                         key=f"slider_{indicator_name}"
                     )
                     st.session_state.current_scores[indicator_name] = new_val
@@ -284,8 +303,5 @@ if st.session_state.assessment_data:
     """, unsafe_allow_html=True)
 
     with st.expander("View Trusted Sources Used"):
-        # The new SDK grounding metadata structure is slightly different.
-        # We rely on the model to fill the "sources" key in the JSON output 
-        # as requested in the system prompt.
         for src in data.get("sources", []):
             st.markdown(f"- [{src['name']}]({src['url']}) ({src['date']})")
