@@ -8,7 +8,7 @@ import time
 
 # --- 1. CONFIGURATION ---
 st.set_page_config(page_title="Tzu Chi Disaster Tool", layout="wide")
-st.title("Tzu Chi Global Disaster Assessment Tool (Deep Search v3 - Hierarchical)")
+st.title("Tzu Chi Global Disaster Assessment Tool (v5: Breaking News Mode)")
 
 # --- 2. API KEY SETUP ---
 if "GOOGLE_API_KEY" in st.secrets:
@@ -56,27 +56,24 @@ for cat, indicators in SCORING_FRAMEWORK.items():
     for name, weight in indicators.items():
         FLAT_WEIGHTS[name] = weight
 
-# --- 4. SYSTEM PROMPT (STRICT HIERARCHY MODE) ---
+# --- 4. SYSTEM PROMPT (BREAKING NEWS MODE) ---
 SYSTEM_PROMPT = """
 You are the Lead Researcher for the 'Tzu Chi Disaster Assessment Unit'.
-Your task is to find SPECIFIC NUMBERS and SOURCES for a humanitarian disaster following a STRICT search hierarchy.
+Your task is to find SPECIFIC NUMBERS and SOURCES for a real-time, unfolding disaster.
 
-### SEARCH HIERARCHY (MANDATORY):
-You must prioritize data extraction in this exact order. If data is found in Tier 1, use it. If not, move to Tier 2.
-1. **TIER 1 (OFFICIAL):** UN OCHA (unocha.org) - Look for "Situation Reports" or "Flash Updates".
-2. **TIER 2 (HUMANITARIAN):** ReliefWeb (reliefweb.int) - Look for assessments and NGO reports.
-3. **TIER 3 (VERIFIED NEWS):** BBC (bbc.com) and Reuters (reuters.com).
-4. **TIER 4 (OTHER):** Other reputable local media or international outlets.
-
-### RESEARCH PROTOCOL:
-- **Query Strategy:** When searching, actively include site operators or specific terms (e.g., "Cyclone Ditwah Sri Lanka site:unocha.org").
-- **Handle Uncertain Data:** If exact official figures are not yet released, YOU MUST REPORT THE ESTIMATES found in Tier 3/4 sources (e.g., "BBC reports >300 dead" is better than "Unknown").
-- **Source Triangulation:** For every data point, provide the specific source URL.
+### BREAKING NEWS PROTOCOL:
+The user states this is a **REAL, UNFOLDING EVENT**. 
+1. **Search Hierarchy:** Prioritize OCHA > ReliefWeb > Reuters/BBC or Search broadly on major news outlets.
+2. **Prioritize Recency:** Value "Live Updates" and articles from the last 24 hours over older "verified" reports.
+3. **Extraction Rules:**
+   - If exact numbers are conflicting, report the **Highest Reported Estimate** (conservative approach for disaster relief).
+   - If a source says "Hundreds feared dead", report **"Hundreds (Est.)"**.
+   - **NEVER** return "Unknown" if there are news reports. Dig out the numbers.
 
 ### OUTPUT FORMAT (JSON ONLY):
 {
   "summary": {
-    "title": "Official Crisis Name",
+    "title": "Crisis Name",
     "country": "Country",
     "date": "Date of Event",
     "description": "3-4 sentence summary of the situation."
@@ -154,14 +151,16 @@ def robust_json_extractor(text):
         return None
 
 def fetch_ai_assessment(api_key, query):
-    """Calls Gemini API with Re-Prompting logic for deeper search."""
+    """Calls Gemini API with Open Web Search."""
     try:
         client = genai.Client(api_key=api_key)
         
-        # 1. Primary Search Prompt - ENHANCED with explicit domain bias
-        # We append the hierarchy to the user query to 'nudge' the search tool
-        bias_instruction = "Focus research on: unocha.org, reliefweb.int, bbc.com, reuters.com"
-        full_prompt = f"{SYSTEM_PROMPT}\n\nUSER QUERY: {query}. {bias_instruction}.\n\nIMPORTANT: If the event is in the future (e.g. 2025), search for it as if it is happening NOW. Do not say 'it hasn't happened yet'."
+        # 1. Broad Search Query (Removing strict 'site:' operators to catch breaking news)
+        full_prompt = (
+            f"{SYSTEM_PROMPT}\n\n"
+            f"USER QUERY: {query}\n"
+            "SEARCH INSTRUCTION: Search for local Sri Lankan news (Daily Mirror, Ada Derana) and global wires (Reuters) for the LATEST death toll and damage assessments."
+        )
         
         # Tools configuration (Google Search enabled)
         tool_config = types.GenerateContentConfig(
@@ -185,40 +184,50 @@ def fetch_ai_assessment(api_key, query):
                 config=tool_config
             )
 
+        # DEBUG: Store the raw grounding metadata to see what URLs it found
+        debug_sources = []
+        if response.candidates and response.candidates[0].grounding_metadata:
+            for chunk in response.candidates[0].grounding_metadata.grounding_chunks:
+                if chunk.web:
+                    debug_sources.append(f"{chunk.web.title}: {chunk.web.uri}")
+
         if not response.text:
-            return None
+            return None, debug_sources
 
         # 3. Parse Data
         data = robust_json_extractor(response.text)
         
-        return data
+        return data, debug_sources
         
     except Exception as e:
         st.error(f"API Error details: {e}")
-        return None
+        return None, []
 
 # --- 6. UI RENDER ---
 
 query = st.text_area("Describe the disaster (Location, Date, Type):", 
-                     placeholder="e.g., Cyclone Ditwah, Sri Lanka, Nov 2025")
+                     placeholder="e.g., Cyclone Ditwah, Sri Lanka, Dec 2025")
 run_btn = st.button("Start Deep Research", type="primary")
 
 if "assessment_data" not in st.session_state:
     st.session_state.assessment_data = None
+if "debug_sources" not in st.session_state:
+    st.session_state.debug_sources = []
 if "current_scores" not in st.session_state:
     st.session_state.current_scores = {}
 
 if run_btn and query:
-    with st.spinner("🔍 Accessing OCHA, ReliefWeb & Reuters... (15-20s)"):
-        data = fetch_ai_assessment(api_key, query)
+    with st.spinner("🔍 Scanning Local News & Global Wires..."):
+        data, sources = fetch_ai_assessment(api_key, query)
         
         if data:
             st.session_state.assessment_data = data
+            st.session_state.debug_sources = sources
             # Pre-load scores
             for key, val in data.get("scores", {}).items():
                 st.session_state.current_scores[key] = val.get("score", 3)
         else:
-            st.error("Failed to retrieve data. Please try again.")
+            st.error("Failed to retrieve data. Please check the spelling of the disaster name.")
 
 if st.session_state.assessment_data:
     data = st.session_state.assessment_data
@@ -335,3 +344,12 @@ if st.session_state.assessment_data:
         <p style="font-size: 1.2em; margin-top: 10px;"><strong>ACTION: {metrics['action']}</strong></p>
     </div>
     """, unsafe_allow_html=True)
+    
+    # --- DEBUG SECTION ---
+    with st.expander("Search Debugger (If results are empty, check here)"):
+        if st.session_state.debug_sources:
+            st.write("Google Search actually returned these sources:")
+            for src in st.session_state.debug_sources:
+                st.write(f"- {src}")
+        else:
+            st.warning("Google Search returned NO results. Is the name spelled correctly?")
