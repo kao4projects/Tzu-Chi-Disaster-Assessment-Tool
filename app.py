@@ -180,11 +180,7 @@ st.title("Tzu Chi Global Disaster Assessment Tool")
 st.subheader("Research humanitarian crises and calculate the Tzu Chi Severity Score.")
 
 # Sidebar for API Key
-with st.sidebar:
-    st.header("Settings")
-    api_key = st.secrets["GOOGLE_API_KEY"]
-    st.markdown("[Get a free key here](https://aistudio.google.com/app/apikey)")
-    st.info("The app uses AI to research trusted sources (OCHA, UN, Reuters) and estimate scores.")
+api_key = st.secrets["GOOGLE_API_KEY"]
 
 # Input Panel
 query = st.text_area("Describe the disaster (Location, Date, Type):", 
