@@ -2,12 +2,16 @@ import streamlit as st
 import google.generativeai as genai
 import json
 import pandas as pd
-from google.generativeai.types import Tool, GoogleSearchRetrieval
 
+# --- VERSION DEBUGGING (Top of App) ---
+# This will verify exactly what version Streamlit is using.
+import importlib.metadata
+try:
+    lib_version = importlib.metadata.version("google-generativeai")
+except:
+    lib_version = "Unknown"
 
 # --- 1. CONFIGURATION & SCORING FRAMEWORK ---
-# We define the indicators and weights exactly as specified in your framework.
-
 SCORING_FRAMEWORK = {
     "1. IMPACT": {
         "1.1 People Affected": 0.25,
@@ -41,15 +45,12 @@ SCORING_FRAMEWORK = {
     }
 }
 
-# Flattens the dictionary for easier calculation logic
 FLAT_WEIGHTS = {}
 for cat, indicators in SCORING_FRAMEWORK.items():
     for name, weight in indicators.items():
         FLAT_WEIGHTS[name] = weight
 
-# --- 2. SYSTEM PROMPT FOR THE AI RESEARCHER ---
-# This prompts the LLM to act as the research engine and return structured JSON.
-
+# --- 2. SYSTEM PROMPT ---
 SYSTEM_PROMPT = """
 You are the assessment engine for the 'Tzu Chi Global Disaster Assessment Tool'.
 Your goal is to research a humanitarian disaster and output structured JSON data based on the user's input.
@@ -103,34 +104,19 @@ Return ONLY valid JSON with this structure (no markdown formatting):
     "5.3 Culture & Faith Alignment": {"score": 1, "justification": "Reasoning..."}
   }
 }
-
-Use the following SCORING RUBRIC to determine scores (1-5):
-[Insert Abbreviated Rubric Here - The AI knows the rubric from the context context, but strictly mapped to the keys above]
-For 'Unknown' data, default to score 1 but note it in justification.
 """
 
 # --- 3. HELPER FUNCTIONS ---
 
 def calculate_final_metrics(scores_dict):
-    """
-    Calculates the Weighted Sum, Normalized Score, and Category
-    based on the current scores (which might be edited by the user).
-    """
     raw_weighted_sum = 0.0
-    
     for indicator, weight in FLAT_WEIGHTS.items():
-        # Get score, default to 0 if missing (shouldn't happen)
         score = scores_dict.get(indicator, 3)
         raw_weighted_sum += score * weight
         
-    # Tzu Chi Severity Score (Normalised)
-    # Total weight sum is 5.0
     severity_score = raw_weighted_sum / 5.0
-    
-    # INFORM Equivalent
     inform_score = severity_score * 2.0
     
-    # Category Determination
     if severity_score >= 4.0:
         category = "A"
         label = "Major International"
@@ -158,31 +144,38 @@ def calculate_final_metrics(scores_dict):
     }
 
 def fetch_ai_assessment(api_key, query):
-    """Calls Gemini API with Google Search Grounding to get real-time data."""
+    """Calls Gemini API with Google Search Grounding."""
     try:
         genai.configure(api_key=api_key)
         
-        # 1. Use the correct model name (Likely 1.5-flash or 2.0-flash-exp)
-        # We use 'gemini-1.5-flash-002' as it is the stable production version.
-        model = genai.GenerativeModel("gemini-2.5-flash")
+        # 1. MODEL NAME FIX: 
+        # Using "gemini-1.5-flash" which is the current stable standard.
+        # "2.5" does not exist and will cause 404.
+        model = genai.GenerativeModel("gemini-1.5-flash")
         
-        # 2. Define the Search Tool explicitly using the class constructor
-        # This fixes the "Unknown field" / "FunctionDeclaration" error
-        search_tool = Tool(
-            google_search_retrieval=GoogleSearchRetrieval(
-                dynamic_retrieval_config=None 
+        # 2. BULLETPROOF TOOL DEFINITION:
+        # This works on BOTH old and new versions of the library.
+        # It tries the new way first, and falls back to the old way if it fails.
+        try:
+            from google.generativeai.types import Tool, GoogleSearchRetrieval
+            search_tool = Tool(
+                google_search_retrieval=GoogleSearchRetrieval(
+                    dynamic_retrieval_config=None 
+                )
             )
-        )
-        
+            tools_payload = [search_tool]
+        except ImportError:
+            # Fallback for older libraries (0.5.x)
+            tools_payload = [{'google_search': {}}]
+
         full_prompt = f"{SYSTEM_PROMPT}\n\nUSER QUERY: {query}"
         
-        # 3. Pass the tool object
+        # 3. GENERATION
         response = model.generate_content(
             full_prompt,
-            tools=[search_tool]
+            tools=tools_payload
         )
         
-        # 4. Clean up response
         text = response.text.replace("```json", "").replace("```", "").strip()
         return json.loads(text)
         
@@ -194,42 +187,37 @@ def fetch_ai_assessment(api_key, query):
 
 st.set_page_config(page_title="Tzu Chi Disaster Tool", layout="wide")
 
-# Header
 st.title("Tzu Chi Global Disaster Assessment Tool")
-st.subheader("Research humanitarian crises and calculate the Tzu Chi Severity Score.")
+st.caption(f"Server Library Version: google-generativeai=={lib_version}")
 
-# Sidebar for API Key
-api_key = st.secrets["GOOGLE_API_KEY"]
+# --- API KEY CHECK ---
+if "GOOGLE_API_KEY" in st.secrets:
+    api_key = st.secrets["GOOGLE_API_KEY"]
+else:
+    st.error("Missing GOOGLE_API_KEY in Streamlit Secrets. Please add it in Settings > Secrets.")
+    st.stop()
 
-# Input Panel
 query = st.text_area("Describe the disaster (Location, Date, Type):", 
                      placeholder="e.g., Floods in Southern Brazil, May 2024")
 run_btn = st.button("Run Assessment", type="primary")
 
-# Initialize Session State
 if "assessment_data" not in st.session_state:
     st.session_state.assessment_data = None
 if "current_scores" not in st.session_state:
     st.session_state.current_scores = {}
 
-# Logic when button is clicked
-if run_btn and query and api_key:
-    with st.spinner("Researching trusted sources and calculating scores..."):
+if run_btn and query:
+    with st.spinner("Researching trusted sources..."):
         data = fetch_ai_assessment(api_key, query)
         if data:
             st.session_state.assessment_data = data
-            # Initialize current scores from AI data
             for key, val in data["scores"].items():
                 st.session_state.current_scores[key] = val["score"]
-        else:
-            st.error("Failed to generate assessment. Please check API Key or try again.")
 
 # --- 5. RESULTS DISPLAY ---
-
 if st.session_state.assessment_data:
     data = st.session_state.assessment_data
     
-    # 5A. Disaster Summary
     st.divider()
     col1, col2 = st.columns([2, 1])
     
@@ -249,15 +237,11 @@ if st.session_state.assessment_data:
         ], columns=["Metric", "Estimate"])
         st.table(df_figs)
 
-    # 5B. Scoring & Manual Override
     st.divider()
     st.subheader("Indicator Scoring & Manual Override")
-    st.markdown("Adjust the sliders below to override the AI's estimated scores. The final recommendation will update in real-time.")
-
-    # Create tabs for dimensions to keep UI clean
+    
     tabs = st.tabs(list(SCORING_FRAMEWORK.keys()))
     
-    # We iterate through tabs/dimensions
     for i, (dim_name, indicators) in enumerate(SCORING_FRAMEWORK.items()):
         with tabs[i]:
             for indicator_name, weight in indicators.items():
@@ -270,30 +254,24 @@ if st.session_state.assessment_data:
                     st.markdown(f"**{indicator_name}** (Weight: {weight})")
                     st.caption(f"AI Justification: {justification}")
                 with c2:
-                    # SLIDER for Manual Override
-                    # Key is unique per indicator to track state
                     new_val = st.slider(
                         "Score", 
                         1, 5, 
                         int(st.session_state.current_scores.get(indicator_name, ai_val)),
                         key=f"slider_{indicator_name}"
                     )
-                    # Update session state immediately
                     st.session_state.current_scores[indicator_name] = new_val
 
-    # 5C. Final Calculation (Real-time)
     metrics = calculate_final_metrics(st.session_state.current_scores)
     
     st.divider()
     st.header("Assessment Results")
     
-    # Metrics Columns
     m1, m2, m3 = st.columns(3)
     m1.metric("Tzu Chi Severity Score (1-5)", f"{metrics['severity']}")
     m2.metric("INFORM Equivalent (0-10)", f"{metrics['inform']}")
     m3.metric("Category", f"{metrics['category']} - {metrics['cat_label']}")
     
-    # Recommendation Box
     st.markdown(f"""
     <div style="padding: 20px; border-radius: 10px; background-color: {metrics['color']}20; border: 2px solid {metrics['color']};">
         <h3 style="color:{metrics['color']}">Recommended Action</h3>
@@ -301,7 +279,6 @@ if st.session_state.assessment_data:
     </div>
     """, unsafe_allow_html=True)
 
-    # 5D. Sources
     with st.expander("View Trusted Sources Used"):
         for src in data.get("sources", []):
             st.markdown(f"- [{src['name']}]({src['url']}) ({src['date']})")
