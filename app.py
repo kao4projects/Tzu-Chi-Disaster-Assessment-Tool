@@ -184,11 +184,12 @@ def safe_get_response_text(response):
     """
     Safely extract a string payload from GenerateContentResponse.
 
-    - Tries .output_text then .text
-    - Falls back to walking candidates/parts
-    - Never raises; returns None if no text
+    Tries several shapes to be compatible with different google-genai versions:
+    - response.output_text
+    - response.text
+    - first candidate.content.parts[i].text
     """
-    # 1) Newer SDK property
+    # 1) Newer SDK property: output_text
     for attr in ("output_text", "text"):
         if hasattr(response, attr):
             try:
@@ -196,10 +197,10 @@ def safe_get_response_text(response):
                 if isinstance(txt, str) and txt.strip():
                     return txt
             except Exception:
-                # Some SDK versions throw when no text is present
+                # Some SDK versions throw if not present
                 pass
 
-    # 2) Fallback: look at parts
+    # 2) Fallback: walk candidates/parts
     try:
         for cand in getattr(response, "candidates", []) or []:
             content = getattr(cand, "content", None)
@@ -219,10 +220,10 @@ def robust_json_extractor(text: str):
     """
     Try to pull a JSON object out of a model response.
 
-    Works with:
+    Handles:
     - Raw JSON
     - ```json ... ``` fenced blocks
-    - JSON preceded/followed by commentary
+    - JSON embedded in extra commentary
     """
     try:
         if not text:
@@ -230,18 +231,21 @@ def robust_json_extractor(text: str):
 
         text = text.strip()
 
-        # If it already looks like pure JSON object, try directly
+        # If it already looks like a pure JSON object
         if text.startswith("{") and text.endswith("}"):
             return json.loads(text)
 
-        # Strip Markdown code fences if present
+        # Strip markdown fenced block if present
         if "```" in text:
-            # eg ```json { ... } ```
-            inner = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.DOTALL | re.IGNORECASE)
-            if inner:
-                return json.loads(inner.group(1))
+            fenced = re.search(
+                r"```(?:json)?\s*(\{.*\})\s*```",
+                text,
+                re.DOTALL | re.IGNORECASE,
+            )
+            if fenced:
+                return json.loads(fenced.group(1))
 
-        # Fallback: first {...} block in the text
+        # Fallback: first {...} block
         match = re.search(r"\{.*\}", text, re.DOTALL)
         if match:
             return json.loads(match.group(0))
@@ -255,6 +259,7 @@ def fetch_ai_assessment(api_key, query, domains):
     try:
         client = genai.Client(api_key=api_key)
         domain_list_str = ", ".join(domains)
+
         full_prompt = (
             f"{SYSTEM_PROMPT}\n\n"
             f"USER QUERY: {query}\n"
@@ -264,11 +269,11 @@ def fetch_ai_assessment(api_key, query, domains):
 
         tool_config = types.GenerateContentConfig(
             tools=[types.Tool(google_search=types.GoogleSearch())],
-            # JSON mode – model should emit proper JSON, not prose
+            # Ask Gemini to respond with JSON
             response_mime_type="application/json",
         )
 
-        # Try 2.0 first, fall back to 1.5
+        # Try Gemini 2.0 first, then fall back to 1.5 if needed
         try:
             response = client.models.generate_content(
                 model="gemini-2.0-flash",
@@ -282,7 +287,7 @@ def fetch_ai_assessment(api_key, query, domains):
                 config=tool_config,
             )
 
-        # --- URL extraction (more defensive) ---
+        # ---------- Extract URLs from grounding metadata (defensive) ----------
         valid_urls = []
         try:
             for cand in getattr(response, "candidates", []) or []:
@@ -297,26 +302,34 @@ def fetch_ai_assessment(api_key, query, domains):
                     if web and getattr(web, "uri", None):
                         valid_urls.append(web.uri)
         except Exception:
-            # If grounding metadata shape changes, just skip URLs instead of failing the whole call
+            # If the structure changes, we just skip URLs – don't fail the whole call
             pass
 
-        # --- Safely get the raw JSON text from Gemini ---
+        # ---------- Safely get raw text from the response ----------
         raw_text_debug = safe_get_response_text(response)
         if not raw_text_debug:
-            # Tell the UI we got a response but no text payload
+            # This is what will show in the Debugger expander
             return None, valid_urls, "Model response contained no text (possibly tool-only call)."
 
+        # ---------- Parse JSON ----------
         data = robust_json_extractor(raw_text_debug)
         if data is None:
-            # Surface first part of the text to help you debug in the UI
+            # Surface the first chunk of text so you can see what Gemini actually returned
             snippet = raw_text_debug[:1200]
-            return None, valid_urls, f"Could not parse JSON from model.\n\nSnippet:\n{snippet}"
+            debug_msg = (
+                "Could not parse JSON from model. "
+                "Here is the first part of the raw response:\n\n"
+                f"{snippet}"
+            )
+            return None, valid_urls, debug_msg
 
+        # Success
         return data, valid_urls, raw_text_debug
 
     except Exception as e:
-        # Any unexpected error bubbles up to debugger text rather than crashing the app
+        # Any unexpected error returns a debug string instead of crashing the app
         return None, [], f"Exception in fetch_ai_assessment: {e!r}"
+
 
 
 # --- 7. UI RENDER ---
