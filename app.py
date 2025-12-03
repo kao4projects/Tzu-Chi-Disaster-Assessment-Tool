@@ -155,6 +155,9 @@ def calculate_final_metrics(scores_dict):
         "color": color
     }
 
+# Add this import at the top of your app.py if it's not there
+from google.generativeai.types import Tool, GoogleSearchRetrieval
+
 def fetch_ai_assessment(api_key, query):
     """Calls Gemini API with Google Search Grounding to get real-time data."""
     try:
@@ -163,15 +166,20 @@ def fetch_ai_assessment(api_key, query):
         # Use the specific -001 model version for stability
         model = genai.GenerativeModel("gemini-2.5-flash")
         
-        # We define the tool config to enable Google Search
-        tool_config = {'google_search': {}}
+        # ROBUST FIX: Construct the tool using the explicit object type
+        # This prevents the "Unknown field" and "FunctionDeclaration" errors
+        google_search_tool = Tool(
+            google_search_retrieval=GoogleSearchRetrieval(
+                dynamic_retrieval_config=None  # Use default settings
+            )
+        )
         
         full_prompt = f"{SYSTEM_PROMPT}\n\nUSER QUERY: {query}"
         
-        # The 'tools' parameter connects the model to the live web
+        # Pass the tool object in a list
         response = model.generate_content(
             full_prompt,
-            tools=tool_config
+            tools=[google_search_tool]
         )
         
         # Clean up the response text
@@ -179,7 +187,8 @@ def fetch_ai_assessment(api_key, query):
         return json.loads(text)
         
     except Exception as e:
-        st.error(f"Error fetching AI assessment: {e}")
+        # Detailed error logging
+        st.error(f"Error details: {e}")
         return None
 
 # --- 4. STREAMLIT UI ---
