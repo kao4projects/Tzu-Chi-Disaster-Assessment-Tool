@@ -407,8 +407,8 @@ def fetch_ai_assessment(api_key, query, domains):
 
         # ----- NEW: force JSON output -----
     tool_config = types.GenerateContentConfig(
-    tools=[types.Tool(google_search=types.GoogleSearch())],
-    response_mime_type="application/json",
+      tools=[types.Tool(google_search=types.GoogleSearch())],
+      response_mime_type="application/json",
     )
 
         # Try 2.5 then fall back to 2.0
