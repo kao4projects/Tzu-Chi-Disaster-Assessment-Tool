@@ -83,8 +83,7 @@ Your task is to populate a disaster matrix with EXACT DATA and SCORING.
 
 ### 1. SEARCH & RECOVERY PROTOCOL:
 - **Primary:** Search the 'Target Sources' for real-time data.
-- **Strict Data Requirement:** You must find real-world reports. Do not simulate data. 
-- **NO DATA PROTOCOL:** If zero information is found, return the JSON structure with fields set to "No data found" or "0". DO NOT return plain text.
+- **Strict Data Requirement:** You must find real-world reports. Do not simulate data. If zero information is found after a thorough search, state "No data found".
 
 ### 2. KEY FIGURES EXTRACTION:
 Extract specific fields.
@@ -101,24 +100,92 @@ Map found data to these scores (1-5).
 If exact numbers are missing, score based on text severity (e.g. "Catastrophic" = 5). 
 **DO NOT DEFAULT TO 3.** If data implies severity, score high.
 
-### OUTPUT FORMAT (JSON ONLY):
-DO NOT wrap the JSON in backticks or Markdown code fences.
-DO NOT add any explanation or commentary before or after the JSON.
-Return ONLY the JSON object following this structure exactly:
+### 5. OUTPUT FORMAT (STRICT JSON):
+Return a single JSON object with this shape.
+Do NOT wrap it in backticks or Markdown.
+Do NOT include comments or ellipses.
+
 {{
-  "summary": {{ "title": "...", "country": "...", "date": "...", "description": "..." }},
+  "summary": {{
+    "title": "…",
+    "country": "…",
+    "date": "…",
+    "description": "…"
+  }},
   "key_figures": {{
-    "affected":   {{"value": "...", "date": "...", "source": "...", "url": "..."}},
-    "fatalities": {{"value": "...", "date": "...", "source": "...", "url": "..."}},
-    "displaced":  {{"value": "...", "date": "...", "source": "...", "url": "..."}},
-    "in_need":    {{"value": "...", "date": "...", "source": "...", "url": "..."}}
+    "affected":   {{"value": "…", "date": "…", "source": "…", "url": "…"}},
+    "fatalities": {{"value": "…", "date": "…", "source": "…", "url": "…"}},
+    "displaced":  {{"value": "…", "date": "…", "source": "…", "url": "…"}},
+    "in_need":    {{"value": "…", "date": "…", "source": "…", "url": "…"}}
   }},
   "scores": {{
-    "1.1 People Affected": {{ "score": 1-5, "extracted_value": "...", "justification": "...", "source_urls": ["..."] }},
-    ...
+    "1.1 People Affected":         {{"score": 1, "extracted_value": "…", "justification": "…", "source_urls": ["…"]}},
+    "1.2 Fatalities":              {{"score": 1, "extracted_value": "…", "justification": "…", "source_urls": ["…"]}},
+    "1.3 People in Need":          {{"score": 1, "extracted_value": "…", "justification": "…", "source_urls": ["…"]}},
+    "1.4 Housing & Building Damage": {{"score": 1, "extracted_value": "…", "justification": "…", "source_urls": ["…"]}},
+    "1.5 Land Mass Affected":      {{"score": 1, "extracted_value": "…", "justification": "…", "source_urls": ["…"]}},
+    "2.1 Food Security (IPC Score)": {{"score": 1, "extracted_value": "…", "justification": "…", "source_urls": ["…"]}},
+    "2.2 WASH / NFI Needs":        {{"score": 1, "extracted_value": "…", "justification": "…", "source_urls": ["…"]}},
+    "2.3 Displacement":            {{"score": 1, "extracted_value": "…", "justification": "…", "source_urls": ["…"]}},
+    "2.4 Vulnerable Groups Proportion": {{"score": 1, "extracted_value": "…", "justification": "…", "source_urls": ["…"]}},
+    "2.5 Health System":           {{"score": 1, "extracted_value": "…", "justification": "…", "source_urls": ["…"]}},
+    "3.1 Access (roads/airports)": {{"score": 1, "extracted_value": "…", "justification": "…", "source_urls": ["…"]}},
+    "3.2 Security":                {{"score": 1, "extracted_value": "…", "justification": "…", "source_urls": ["…"]}},
+    "3.3 Government Capacity":     {{"score": 1, "extracted_value": "…", "justification": "…", "source_urls": ["…"]}},
+    "3.4 Communications":          {{"score": 1, "extracted_value": "…", "justification": "…", "source_urls": ["…"]}},
+    "4.1 Media Intensity":         {{"score": 1, "extracted_value": "…", "justification": "…", "source_urls": ["…"]}},
+    "4.2 UN/INGO Activation":      {{"score": 1, "extracted_value": "…", "justification": "…", "source_urls": ["…"]}},
+    "4.3 Internal Interest (Tzu Chi)": {{"score": 1, "extracted_value": "…", "justification": "…", "source_urls": ["…"]}},
+    "5.1 Local Partnerships":      {{"score": 1, "extracted_value": "…", "justification": "…", "source_urls": ["…"]}},
+    "5.2 Legal & Financing":       {{"score": 1, "extracted_value": "…", "justification": "…", "source_urls": ["…"]}},
+    "5.3 Culture & Faith Alignment": {{"score": 1, "extracted_value": "…", "justification": "…", "source_urls": ["…"]}}
   }}
 }}
 """
+# --- 5b. STRUCTURED OUTPUT SCHEMA FOR GEMINI ---
+RESPONSE_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "summary": {
+            "type": "OBJECT",
+            "properties": {
+                "title":       {"type": "STRING", "nullable": True},
+                "country":     {"type": "STRING", "nullable": True},
+                "date":        {"type": "STRING", "nullable": True},
+                "description": {"type": "STRING", "nullable": True},
+            },
+        },
+        "key_figures": {
+            "type": "OBJECT",
+            "additionalProperties": {
+                "type": "OBJECT",
+                "properties": {
+                    "value":  {"type": "STRING", "nullable": True},
+                    "date":   {"type": "STRING", "nullable": True},
+                    "source": {"type": "STRING", "nullable": True},
+                    "url":    {"type": "STRING", "nullable": True},
+                },
+            },
+        },
+        "scores": {
+            "type": "OBJECT",
+            "additionalProperties": {
+                "type": "OBJECT",
+                "properties": {
+                    "score":           {"type": "INTEGER", "nullable": True},
+                    "extracted_value": {"type": "STRING", "nullable": True},
+                    "justification":   {"type": "STRING", "nullable": True},
+                    "source_urls": {
+                        "type": "ARRAY",
+                        "items": {"type": "STRING"},
+                        "nullable": True,
+                    },
+                },
+            },
+        },
+    },
+}
+
 
 # --- 6. HELPER FUNCTIONS ---
 
@@ -192,42 +259,6 @@ def safe_get_response_text(response):
         pass
     return None
 
-
-def robust_json_extractor(text: str):
-    """
-    Robustly extract JSON from model response.
-    Fixed to handle markdown fences and trailing text better than regex.
-    """
-    if not text:
-        return None
-
-    # Normalise whitespace
-    text = str(text).strip()
-
-    # Find the FIRST opening brace and the LAST closing brace
-    # This ignores any preamble text or trailing explanations/sources
-    start_idx = text.find("{")
-    end_idx = text.rfind("}")
-
-    if start_idx == -1 or end_idx == -1:
-        return None
-
-    # Extract the substring that is likely JSON
-    candidate = text[start_idx : end_idx + 1]
-
-    # Attempt parse
-    try:
-        return json.loads(candidate)
-    except json.JSONDecodeError:
-        # Fallback: Sometimes models use single quotes or Python syntax
-        # We can try a simple replace, though risky, it salvages some errors
-        try:
-            return json.loads(candidate.replace("'", '"').replace("None", "null").replace("True", "true").replace("False", "false"))
-        except Exception:
-            pass
-
-    return None
-
 def fetch_ai_assessment(api_key, query, domains):
     try:
         client = genai.Client(api_key=api_key)
@@ -237,36 +268,40 @@ def fetch_ai_assessment(api_key, query, domains):
             f"{SYSTEM_PROMPT}\n\n"
             f"USER QUERY: {query}\n"
             f"TARGET SOURCES: {domain_list_str}\n"
-            "INSTRUCTION: Find the LATEST data. Use descriptive text to infer scores if numbers are missing."
+            "INSTRUCTION: Find the LATEST data. Use descriptive text to infer scores if numbers are missing. "
+            "Always fill every indicator in the 'scores' object."
         )
 
         tool_config = types.GenerateContentConfig(
             tools=[types.Tool(google_search=types.GoogleSearch())],
             response_mime_type="application/json",
+            response_schema=RESPONSE_SCHEMA,
         )
 
+        # Try 2.5 then fall back
         try:
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=full_prompt,
+                config=tool_config,
+            )
+        except Exception:
             response = client.models.generate_content(
                 model="gemini-2.0-flash",
                 contents=full_prompt,
                 config=tool_config,
             )
-        except Exception:
-            # Fallback to older model if 2.0 not available
-            response = client.models.generate_content(
-                model="gemini-1.5-flash",
-                contents=full_prompt,
-                config=tool_config,
-            )
 
-        # ---------- Extract URLs (Defensive) ----------
+        # ---------- Extract URLs from grounding metadata ----------
         valid_urls = []
         try:
             for cand in getattr(response, "candidates", []) or []:
                 gm = getattr(cand, "grounding_metadata", None)
-                if not gm: continue
+                if not gm:
+                    continue
                 chunks = getattr(gm, "grounding_chunks", None)
-                if not chunks: continue
+                if not chunks:
+                    continue
                 for chunk in chunks:
                     web = getattr(chunk, "web", None)
                     if web and getattr(web, "uri", None):
@@ -274,23 +309,29 @@ def fetch_ai_assessment(api_key, query, domains):
         except Exception:
             pass
 
-        # ---------- Get Text ----------
-        raw_text_debug = safe_get_response_text(response)
-        if not raw_text_debug:
-            return None, valid_urls, "Model response contained no text (possibly tool-only call)."
+        # ---------- Prefer SDK-parsed structured output ----------
+        if getattr(response, "parsed", None) is not None:
+            data = response.parsed
+            # If it's pydantic, convert to plain dict
+            if hasattr(data, "model_dump"):
+                data = data.model_dump()
+            return data, valid_urls, json.dumps(data, indent=2)
 
-        # ---------- Parse JSON ----------
-        data = robust_json_extractor(raw_text_debug)
-        if data is None:
-            snippet = raw_text_debug[:1200]
+        # ---------- Fallback: use text and best-effort JSON load ----------
+        raw_text = safe_get_response_text(response)
+        if not raw_text:
+            return None, valid_urls, "Model response contained no text and no parsed JSON."
+
+        try:
+            data = json.loads(raw_text)
+            return data, valid_urls, raw_text
+        except Exception as e:
+            snippet = raw_text[:1200]
             debug_msg = (
-                "Could not parse JSON from model. "
-                "Here is the first part of the raw response:\n\n"
-                f"{snippet}"
+                f"Could not parse JSON from model even after structured-output config. "
+                f"json.loads error: {e!r}\n\nFirst part of response:\n\n{snippet}"
             )
             return None, valid_urls, debug_msg
-
-        return data, valid_urls, raw_text_debug
 
     except Exception as e:
         return None, [], f"Exception in fetch_ai_assessment: {e!r}"
