@@ -420,7 +420,6 @@ def robust_json_extractor(text: str):
             return None, f"json.loads error: {e_json}; ast.literal_eval error: {e_py}"
 
 
-
 def fetch_ai_assessment(api_key, query, domains):
     try:
         client = genai.Client(api_key=api_key)
@@ -433,12 +432,11 @@ def fetch_ai_assessment(api_key, query, domains):
             "INSTRUCTION: Find the LATEST data. Use descriptive text to infer scores if numbers are missing."
         )
 
-        # ✅ VALID CONFIG (NO forbidden fields)
         tool_config = types.GenerateContentConfig(
             tools=[types.Tool(google_search=types.GoogleSearch())],
         )
 
-        # ✅ Proper try/except structure
+        # --- MODEL CALL (with fallback) ---
         try:
             response = client.models.generate_content(
                 model="gemini-2.5-flash",
@@ -474,7 +472,7 @@ def fetch_ai_assessment(api_key, query, domains):
         if not raw_text_debug:
             return None, valid_urls, "Model returned no text."
 
-               # ---------- Parse JSON (lenient) ----------
+        # ---------- Parse JSON ----------
         data, parse_err = robust_json_extractor(raw_text_debug)
         if data is None:
             snippet = raw_text_debug[:1200]
@@ -488,7 +486,8 @@ def fetch_ai_assessment(api_key, query, domains):
 
         return data, valid_urls, raw_text_debug
 
-
+    except Exception as e:
+        return None, [], f"Exception in fetch_ai_assessment: {repr(e)}"
 
 
 # --- 7. UI RENDER ---
