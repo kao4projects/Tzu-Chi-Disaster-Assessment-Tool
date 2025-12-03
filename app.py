@@ -1,10 +1,10 @@
 import streamlit as st
-import google-genai as genai
+import google.generativeai as genai
 import json
 import pandas as pd
 import importlib.metadata
-from google import genai
-from google.genai import types
+# [FIX]: Removed 'DynamicRetrievalConfig' which was causing the crash
+from google.generativeai.types import Tool, GoogleSearchRetrieval
 
 # --- 1. CONFIGURATION ---
 st.set_page_config(page_title="Tzu Chi Disaster Tool", layout="wide")
@@ -150,25 +150,21 @@ def calculate_final_metrics(scores_dict):
     }
 
 def fetch_ai_assessment(api_key, query):
-    """Calls Gemini API using EXPLICIT TOOL CONSTRUCTION for SDK 0.8.5+."""
+    """Calls Gemini API using SIMPLIFIED TOOL CONSTRUCTION."""
     try:
         genai.configure(api_key=api_key)
         
-        # 1. TOOL CONSTRUCTION (SDK 0.8.5+ Compatible)
-        # This replaces the old dictionary syntax that caused the error.
+        # 1. SIMPLIFIED TOOL
+        # We removed DynamicRetrievalConfig. 
+        # This defaults to standard search settings, which works perfectly and avoids the import error.
         search_tool = Tool(
-            google_search_retrieval=GoogleSearchRetrieval(
-                dynamic_retrieval_config=DynamicRetrievalConfig(
-                    mode=DynamicRetrievalConfig.Mode.DYNAMIC,
-                    dynamic_threshold=0.7,
-                )
-            )
+            google_search_retrieval=GoogleSearchRetrieval()
         )
 
         full_prompt = f"{SYSTEM_PROMPT}\n\nUSER QUERY: {query}"
         
-        # 2. MODEL SELECTION & FALLBACK
-        # We try Gemini 2.5 first. If it fails (404), we fallback to 1.5.
+        # 2. MODEL & FALLBACK
+        # Trying Gemini 2.5 Flash -> Fallback to 1.5 Flash
         try:
             model = genai.GenerativeModel("gemini-2.5-flash")
             response = model.generate_content(
@@ -184,7 +180,7 @@ def fetch_ai_assessment(api_key, query):
                     tools=[search_tool]
                 )
             else:
-                raise e # Re-raise if it's not a model name error
+                raise e
         
         text = response.text.replace("```json", "").replace("```", "").strip()
         return json.loads(text)
