@@ -182,7 +182,7 @@ st.subheader("Research humanitarian crises and calculate the Tzu Chi Severity Sc
 # Sidebar for API Key
 with st.sidebar:
     st.header("Settings")
-    api_key = st.secrets["AIzaSyAi7EHecZ61lIW9TdBLH5wZAwExT9vjTUI"]
+    api_key = st.secrets[AIzaSyAi7EHecZ61lIW9TdBLH5wZAwExT9vjTUI]
     st.markdown("[Get a free key here](https://aistudio.google.com/app/apikey)")
     st.info("The app uses AI to research trusted sources (OCHA, UN, Reuters) and estimate scores.")
 
