@@ -342,54 +342,82 @@ def robust_json_extractor(text: str):
     """
     Try (very) hard to pull a JSON object out of a model response.
 
-    Handles:
-    - ```json ... ``` fenced blocks
-    - Extra commentary before/after the JSON
-    - Trailing commas and null/true/false using ast.literal_eval
+    - Ignores braces inside quoted strings
+    - Finds the first '{' and then walks until braces are balanced
+    - First tries json.loads
+    - Falls back to ast.literal_eval for slightly-broken JSON
+    Returns: (obj or None, error_message or None)
     """
     if not text:
-        return None
+        return None, "Response text was empty."
 
-    # Always work on a plain string
     text = str(text).strip()
 
-    # --- Strip markdown fences if present ---
-    # e.g. ```json\n{...}\n```  or  ```\n{...}\n```
+    # Strip markdown fences if present: ```json ... ```
     if text.startswith("```"):
-        # remove the first ``` line
         parts = text.split("```", 2)
         if len(parts) >= 2:
-            # everything after the first ``` block opener
-            text = parts[1]
-        text = text.strip()
+            text = parts[1].strip()
 
-    # Now find the first '{' and the last '}'
+    # Find first '{'
     start = text.find("{")
-    end = text.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        return None
+    if start == -1:
+        return None, "Could not find '{' in model response."
 
-    candidate = text[start : end + 1]
+    s = text[start:]
 
-    # --- First attempt: strict JSON ---
+    # Find matching closing '}' with brace balancing, ignoring strings
+    depth = 0
+    end_index = None
+    in_string = False
+    escape = False
+
+    for i, ch in enumerate(s):
+        if escape:
+            escape = False
+            continue
+
+        if ch == "\\":
+            # escaped character inside a string
+            escape = True
+            continue
+
+        if ch == '"':
+            in_string = not in_string
+            continue
+
+        if in_string:
+            continue
+
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end_index = i
+                break
+
+    if end_index is None:
+        return None, "Could not find a balanced closing '}' in response."
+
+    candidate = s[: end_index + 1]
+
+    # Strict JSON first
     try:
-        return json.loads(candidate)
-    except Exception:
-        pass
+        return json.loads(candidate), None
+    except Exception as e_json:
+        # Fallback: Python literal
+        candidate_py = re.sub(r"\bnull\b", "None", candidate)
+        candidate_py = re.sub(r"\btrue\b", "True", candidate_py, flags=re.I)
+        candidate_py = re.sub(r"\bfalse\b", "False", candidate_py, flags=re.I)
 
-    # --- Fallback: Python literal via ast.literal_eval (more forgiving) ---
-    # Convert JSON literal keywords to Python
-    candidate_py = re.sub(r"\bnull\b", "None", candidate)
-    candidate_py = re.sub(r"\btrue\b", "True", candidate_py, flags=re.I)
-    candidate_py = re.sub(r"\bfalse\b", "False", candidate_py, flags=re.I)
-
-    try:
-        obj = ast.literal_eval(candidate_py)
-        if isinstance(obj, dict):
-            return obj
-        return None
-    except Exception:
-        return None
+        try:
+            obj = ast.literal_eval(candidate_py)
+            if isinstance(obj, dict):
+                return obj, None
+            return None, f"ast.literal_eval returned non-dict: {type(obj)}"
+        except Exception as e_py:
+            return None, f"json.loads error: {e_json}; ast.literal_eval error: {e_py}"
 
 
 
@@ -446,12 +474,13 @@ def fetch_ai_assessment(api_key, query, domains):
         if not raw_text_debug:
             return None, valid_urls, "Model returned no text."
 
-        # ---------- Parse JSON ----------
-        data = robust_json_extractor(raw_text_debug)
+               # ---------- Parse JSON (lenient) ----------
+        data, parse_err = robust_json_extractor(raw_text_debug)
         if data is None:
             snippet = raw_text_debug[:1200]
             debug_msg = (
                 "Could not parse JSON from model.\n\n"
+                f"Parser error: {parse_err}\n\n"
                 "First part of response:\n\n"
                 f"{snippet}"
             )
@@ -459,8 +488,6 @@ def fetch_ai_assessment(api_key, query, domains):
 
         return data, valid_urls, raw_text_debug
 
-    except Exception as e:
-        return None, [], f"Exception in fetch_ai_assessment: {e!r}"
 
 
 
