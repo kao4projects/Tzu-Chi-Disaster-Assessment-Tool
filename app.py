@@ -156,17 +156,28 @@ def calculate_final_metrics(scores_dict):
     }
 
 def fetch_ai_assessment(api_key, query):
-    """Calls Gemini API to get the JSON data."""
+    """Calls Gemini API with Google Search Grounding to get real-time data."""
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-2.5-flash") # Or pro
+        
+        # Use the specific -001 model version for stability
+        model = genai.GenerativeModel("gemini-2.5-flash")
+        
+        # We define the tool config to enable Google Search
+        tool_config = {'google_search_retrieval': {}}
         
         full_prompt = f"{SYSTEM_PROMPT}\n\nUSER QUERY: {query}"
         
-        response = model.generate_content(full_prompt)
-        # Attempt to clean markdown if present
+        # The 'tools' parameter connects the model to the live web
+        response = model.generate_content(
+            full_prompt,
+            tools=tool_config
+        )
+        
+        # Clean up the response text
         text = response.text.replace("```json", "").replace("```", "").strip()
         return json.loads(text)
+        
     except Exception as e:
         st.error(f"Error fetching AI assessment: {e}")
         return None
