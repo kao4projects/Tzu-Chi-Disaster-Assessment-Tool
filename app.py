@@ -148,30 +148,30 @@ def calculate_final_metrics(scores_dict):
         "color": color
     }
 
-def clean_and_parse_json(text):
+def robust_json_extractor(text):
     """
-    Robustly extracts JSON from a string by finding the first '{' and last '}'.
-    Fixes 'Extra data' errors.
+    Uses the JSONDecoder.raw_decode method to parse exactly one JSON object
+    and ignore any 'Extra data' (garbage text) that follows it.
     """
     try:
-        # 1. Try direct parse first
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
-
-    try:
-        # 2. Extract substring from first { to last }
-        start = text.find('{')
-        end = text.rfind('}')
+        # 1. Find the first opening brace
+        start_idx = text.find('{')
+        if start_idx == -1:
+            return None
+            
+        # 2. Trim everything before the first brace
+        text_trimmed = text[start_idx:]
         
-        if start != -1 and end != -1 and end > start:
-            json_str = text[start : end + 1]
-            return json.loads(json_str)
-        else:
-            raise ValueError("No valid JSON object found in response.")
+        # 3. Use raw_decode. It returns (object, end_index)
+        # This is the gold standard for "Extra data" errors.
+        obj, _ = json.JSONDecoder().raw_decode(text_trimmed)
+        return obj
+        
     except Exception as e:
-        st.error(f"JSON Parsing Error: {e}")
-        st.code(text) # Show raw text for debugging
+        st.error(f"Failed to extract JSON: {e}")
+        # Log the raw text in an expander for debugging
+        with st.expander("Debug: Raw Model Output"):
+            st.code(text)
         return None
 
 def fetch_ai_assessment(api_key, query):
@@ -180,7 +180,7 @@ def fetch_ai_assessment(api_key, query):
         client = genai.Client(api_key=api_key)
         full_prompt = f"{SYSTEM_PROMPT}\n\nUSER QUERY: {query}"
         
-        # We try gemini-2.0-flash first
+        # Attempt generation
         try:
             response = client.models.generate_content(
                 model='gemini-2.0-flash',
@@ -206,7 +206,7 @@ def fetch_ai_assessment(api_key, query):
             )
         
         if response.text:
-            return clean_and_parse_json(response.text)
+            return robust_json_extractor(response.text)
         else:
             st.error("Empty response from model.")
             return None
