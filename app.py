@@ -4,10 +4,11 @@ from google.genai import types
 import json
 import pandas as pd
 import re
+import time
 
 # --- 1. CONFIGURATION ---
 st.set_page_config(page_title="Tzu Chi Disaster Tool", layout="wide")
-st.title("Tzu Chi Global Disaster Assessment Tool (Deep Search v2)")
+st.title("Tzu Chi Global Disaster Assessment Tool (Deep Search v3)")
 
 # --- 2. API KEY SETUP ---
 if "GOOGLE_API_KEY" in st.secrets:
@@ -55,52 +56,49 @@ for cat, indicators in SCORING_FRAMEWORK.items():
     for name, weight in indicators.items():
         FLAT_WEIGHTS[name] = weight
 
-# --- 4. SYSTEM PROMPT (ENHANCED) ---
+# --- 4. SYSTEM PROMPT (AGGRESSIVE RESEARCH MODE) ---
 SYSTEM_PROMPT = """
-You are the Lead Assessment Engine for the 'Tzu Chi Global Disaster Assessment Tool'.
-Your goal is to conduct a DEEP DIVE research on a humanitarian disaster and output granular, evidence-based data.
+You are the Lead Researcher for the 'Tzu Chi Disaster Assessment Unit'.
+Your task is to find SPECIFIC NUMBERS and SOURCES for a humanitarian disaster.
 
-RESEARCH STRATEGY:
-1. Search specifically for "Situation Report", "Flash Update", or "OCHA Snapshot" + [Disaster Name].
-2. Cross-reference at least 3 distinct sources (e.g., local media, UN OCHA, International News) to verify numbers.
-3. If figures are "unknown", search for "preliminary damage assessment [location]".
 
-OUTPUT FORMAT:
-Return ONLY valid JSON. Structure:
+### RESEARCH PROTOCOL:
+STRICT SOURCE RULES:
+- Use ONLY: OCHA, ReliefWeb, UN bodies (WHO, UNICEF, WFP), EU/ECHO, ACAPS, CNN, BBC, Reuters.
+- Prioritise data from the last 7-30 days.
+- If numbers conflict, choose the conservative/high-risk estimate.
+**Handle Uncertain Data:** If exact official figures are not yet released, YOU MUST REPORT THE ESTIMATES found in news (e.g., "Reports indicate >300 dead" is better than "Unknown").
+**Source Triangulation:** For every data point, try to find 2-3 sources (e.g., ReliefWeb, Major News Outlet, UN).
+
+### OUTPUT FORMAT (JSON ONLY):
 {
   "summary": {
     "title": "Official Crisis Name",
     "country": "Country",
     "date": "Date of Event",
-    "description": "Concise executive summary (3-4 sentences)."
+    "description": "3-4 sentence summary of the situation."
   },
   "key_figures": {
-    "affected": {"value": "e.g. 1.2M people", "source_url": "url..."},
-    "fatalities": {"value": "e.g. 450 confirmed", "source_url": "url..."},
+    "affected": {"value": "e.g. 1.2 million", "source_url": "url..."},
+    "fatalities": {"value": "e.g. 350 confirmed", "source_url": "url..."},
     "displaced": {"value": "e.g. 15,000 in shelters", "source_url": "url..."},
     "in_need": {"value": "e.g. 300,000", "source_url": "url..."}
   },
   "scores": {
     "1.1 People Affected": {
       "score": 1-5, 
-      "extracted_value": "Exact number or % found (e.g., '150k affected')",
-      "justification": "Why this score? (e.g. 'High impact relative to population...')",
+      "extracted_value": "The specific number found (e.g., '1.4 million')",
+      "justification": "Why this score? (e.g., >1M is Critical)",
       "source_urls": ["url1", "url2", "url3"]
     },
-    ... (Repeat for ALL 19 indicators in the framework) ...
+    ... (Repeat for ALL 19 indicators) ...
   }
 }
 
-SCORING GUIDE (1=Low, 5=Critical):
-- 1.1 Affected: 1(<10k), 3(100k-500k), 5(>1M)
-- 1.2 Fatalities: 1(<10), 3(100-1000), 5(>1000)
-- 1.3 In Need: 1(<10% pop), 5(>50% pop)
-- 2.1 Food: 1(IPC 1-2), 3(IPC 3), 5(IPC 4-5 Famine)
-- 3.1 Access: 1(Open), 3(Restricted), 5(Inaccessible)
-
-IMPORTANT: 
-- Populate "extracted_value" with the RAW data point you found.
-- Populate "source_urls" with the DIRECT links where you found that specific data point.
+### SCORING RUBRIC:
+- **Fatalities:** 1(<10), 2(10-100), 3(100-500), 4(500-1k), 5(>1k)
+- **Affected:** 1(<10k), 3(100k-1M), 5(>1M)
+- **Displaced:** 1(<1k), 3(10k-50k), 5(>100k)
 """
 
 # --- 5. CORE LOGIC ---
@@ -150,41 +148,49 @@ def robust_json_extractor(text):
         obj, _ = json.JSONDecoder().raw_decode(text_trimmed)
         return obj
     except Exception as e:
-        st.error(f"Data Extraction Error: {e}")
-        with st.expander("Show Raw Output"):
-            st.code(text)
         return None
 
 def fetch_ai_assessment(api_key, query):
-    """Calls Gemini API using the NEW v1.0 SDK (google-genai)."""
+    """Calls Gemini API with Re-Prompting logic for deeper search."""
     try:
         client = genai.Client(api_key=api_key)
-        full_prompt = f"{SYSTEM_PROMPT}\n\nUSER QUERY: {query}"
         
-        # Use gemini-2.0-flash for speed + search capability
-        # Fallback to 1.5-flash if 2.0 is not active in the region
-        models_to_try = ['gemini-2.0-flash', 'gemini-1.5-flash']
+        # 1. Primary Search Prompt
+        full_prompt = f"{SYSTEM_PROMPT}\n\nUSER QUERY: {query}\n\nIMPORTANT: If the event is in the future (e.g. 2025), search for it as if it is happening NOW. Do not say 'it hasn't happened yet'."
         
-        response = None
-        for model_name in models_to_try:
-            try:
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=full_prompt,
-                    config=types.GenerateContentConfig(
-                        tools=[types.Tool(google_search=types.GoogleSearch())],
-                        response_mime_type="application/json"
-                    )
-                )
-                break # If successful, exit loop
-            except Exception:
-                continue
+        # Tools configuration (Google Search enabled)
+        tool_config = types.GenerateContentConfig(
+            tools=[types.Tool(google_search=types.GoogleSearch())],
+            response_mime_type="application/json"
+        )
 
-        if response and response.text:
-            return robust_json_extractor(response.text)
-        else:
-            st.error("Could not retrieve data from AI models.")
+        # 2. Execute Call
+        # We prefer gemini-2.0-flash for better search capabilities
+        try:
+            response = client.models.generate_content(
+                model='gemini-2.0-flash',
+                contents=full_prompt,
+                config=tool_config
+            )
+        except Exception:
+            st.warning("Gemini 2.0 Flash busy, falling back to 1.5 Flash...")
+            response = client.models.generate_content(
+                model='gemini-1.5-flash',
+                contents=full_prompt,
+                config=tool_config
+            )
+
+        if not response.text:
             return None
+
+        # 3. Parse Data
+        data = robust_json_extractor(response.text)
+        
+        # 4. (Optional) Validation - Check if we got "Unknown"
+        # If 'fatalities' is unknown, we could theoretically trigger a second specific prompt here.
+        # For this version, we trust the "Aggressive Search" prompt.
+        
+        return data
         
     except Exception as e:
         st.error(f"API Error details: {e}")
@@ -193,7 +199,7 @@ def fetch_ai_assessment(api_key, query):
 # --- 6. UI RENDER ---
 
 query = st.text_area("Describe the disaster (Location, Date, Type):", 
-                     placeholder="e.g., Cyclone Fengal, Sri Lanka/India, Nov-Dec 2024")
+                     placeholder="e.g., Cyclone Ditwah, Sri Lanka, Nov 2025")
 run_btn = st.button("Start Deep Research", type="primary")
 
 if "assessment_data" not in st.session_state:
@@ -202,13 +208,16 @@ if "current_scores" not in st.session_state:
     st.session_state.current_scores = {}
 
 if run_btn and query:
-    with st.spinner("🔍 Deep Diving into UN OCHA, ReliefWeb, and Local News... (This may take 15s)"):
+    with st.spinner("🔍 Accessing ReliefWeb, OCHA & Local News... (15-20s)"):
         data = fetch_ai_assessment(api_key, query)
+        
         if data:
             st.session_state.assessment_data = data
             # Pre-load scores
             for key, val in data.get("scores", {}).items():
                 st.session_state.current_scores[key] = val.get("score", 3)
+        else:
+            st.error("Failed to retrieve data. Please try again.")
 
 if st.session_state.assessment_data:
     data = st.session_state.assessment_data
@@ -240,20 +249,20 @@ if st.session_state.assessment_data:
         disp_val, disp_url = fmt_kf(kf.get('displaced', {}))
         need_val, need_url = fmt_kf(kf.get('in_need', {}))
 
-        # Custom metrics with links
+        # Custom metrics
         c1, c2 = st.columns(2)
         c1.metric("Affected", aff_val)
-        c1.markdown(f"[Source]({aff_url})" if aff_url != '#' else "")
+        if aff_url != '#': c1.markdown(f"[Source]({aff_url})")
         
         c2.metric("Fatalities", fat_val)
-        c2.markdown(f"[Source]({fat_url})" if fat_url != '#' else "")
+        if fat_url != '#': c2.markdown(f"[Source]({fat_url})")
         
         c3, c4 = st.columns(2)
         c3.metric("Displaced", disp_val)
-        c3.markdown(f"[Source]({disp_url})" if disp_url != '#' else "")
+        if disp_url != '#': c3.markdown(f"[Source]({disp_url})")
         
         c4.metric("In Need", need_val)
-        c4.markdown(f"[Source]({need_url})" if need_url != '#' else "")
+        if need_url != '#': c4.markdown(f"[Source]({need_url})")
 
     # --- TABS FOR DETAILED SCORING ---
     st.divider()
@@ -281,13 +290,19 @@ if st.session_state.assessment_data:
                         
                     with c2:
                         # Highlight the extracted value
-                        st.markdown(f"**Evidence:** `{ai_value}`")
+                        if "Unknown" in str(ai_value):
+                             st.markdown(f"**Evidence:** `{ai_value}`", help="AI could not find exact number")
+                        else:
+                             st.markdown(f"**Evidence:** `{ai_value}`")
+                        
                         st.write(f"_{ai_just}_")
                         
-                        # Render Sources as small pills or links
-                        if ai_urls:
-                            links = " | ".join([f"[Source {j+1}]({url})" for j, url in enumerate(ai_urls) if url])
-                            st.markdown(f"🔗 {links}")
+                        # Render Sources as multiple links
+                        if ai_urls and isinstance(ai_urls, list):
+                            links_md = " | ".join([f"[Source {j+1}]({url})" for j, url in enumerate(ai_urls) if url])
+                            st.markdown(f"🔗 Found in: {links_md}")
+                        elif isinstance(ai_urls, str):
+                            st.markdown(f"[Source]({ai_urls})")
                         else:
                             st.caption("No direct links returned.")
 
