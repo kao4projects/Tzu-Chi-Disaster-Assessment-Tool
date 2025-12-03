@@ -404,8 +404,7 @@ def fetch_ai_assessment(api_key, query, domains):
             f"TARGET SOURCES: {domain_list_str}\n"
             "INSTRUCTION: Find the LATEST data. Use descriptive text to infer scores if numbers are missing."
         )
-
-        tool_config = types.GenerateContentConfig(
+tool_config = types.GenerateContentConfig(
     tools=[types.Tool(google_search=types.GoogleSearch())],
     generation_config=types.GenerationConfig(
         response_mime_type="application/json",
@@ -425,7 +424,6 @@ except Exception:
         contents=full_prompt,
         config=tool_config,
     )
-
 
         # ---------- Extract URLs from grounding metadata ----------
         valid_urls = []
