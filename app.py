@@ -494,7 +494,7 @@ def fetch_ai_assessment(api_key, query, domains):
 # --- 7. UI RENDER ---
 
 query = st.text_area("Describe the disaster (Location, Date, Type):", 
-                     placeholder="e.g., Cyclone Ditwah, Sri Lanka, Dec 2025")
+placeholder="e.g., Cyclone Ditwah, Sri Lanka, Dec 2025")
 run_btn = st.button("Start Deep Research", type="primary")
 
 if "assessment_data" not in st.session_state:
