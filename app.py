@@ -1,14 +1,12 @@
 import streamlit as st
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 import json
 import pandas as pd
-import importlib.metadata
-# [FIX]: Removed 'DynamicRetrievalConfig' which was causing the crash
-from google.generativeai.types import Tool, GoogleSearchRetrieval
 
 # --- 1. CONFIGURATION ---
 st.set_page_config(page_title="Tzu Chi Disaster Tool", layout="wide")
-st.title("Tzu Chi Global Disaster Assessment Tool")
+st.title("Tzu Chi Global Disaster Assessment Tool (v1.0 SDK)")
 
 # --- 2. API KEY SETUP ---
 if "GOOGLE_API_KEY" in st.secrets:
@@ -150,40 +148,53 @@ def calculate_final_metrics(scores_dict):
     }
 
 def fetch_ai_assessment(api_key, query):
-    """Calls Gemini API using SIMPLIFIED TOOL CONSTRUCTION."""
+    """Calls Gemini API using the NEW v1.0 SDK (google-genai)."""
     try:
-        genai.configure(api_key=api_key)
-        
-        # 1. SIMPLIFIED TOOL
-        # We removed DynamicRetrievalConfig. 
-        # This defaults to standard search settings, which works perfectly and avoids the import error.
-        search_tool = Tool(
-            google_search_retrieval=GoogleSearchRetrieval()
-        )
+        # 1. INITIALIZE CLIENT (v1.0 Style)
+        client = genai.Client(api_key=api_key)
 
         full_prompt = f"{SYSTEM_PROMPT}\n\nUSER QUERY: {query}"
         
-        # 2. MODEL & FALLBACK
-        # Trying Gemini 2.5 Flash -> Fallback to 1.5 Flash
+        # 2. GENERATE CONTENT WITH SEARCH TOOL
+        # In v1.0, tools are passed inside the `config` parameter.
+        # We use 'gemini-2.0-flash' as the primary model.
         try:
-            model = genai.GenerativeModel("gemini-2.5-flash")
-            response = model.generate_content(
-                full_prompt,
-                tools=[search_tool]
+            response = client.models.generate_content(
+                model='gemini-2.0-flash',
+                contents=full_prompt,
+                config=types.GenerateContentConfig(
+                    tools=[types.Tool(
+                        google_search=types.GoogleSearch() # Enable Grounding/Search
+                    )],
+                    response_mime_type="application/json" # Enforce JSON output
+                )
             )
         except Exception as e:
-            if "404" in str(e) or "not found" in str(e).lower():
-                st.warning("Gemini 2.5 Flash not available. Falling back to Gemini 1.5 Flash.")
-                model = genai.GenerativeModel("gemini-1.5-flash")
-                response = model.generate_content(
-                    full_prompt,
-                    tools=[search_tool]
+            st.warning(f"Primary model unavailable ({e}). Falling back to Gemini 1.5 Flash.")
+            response = client.models.generate_content(
+                model='gemini-1.5-flash',
+                contents=full_prompt,
+                config=types.GenerateContentConfig(
+                    tools=[types.Tool(
+                        google_search=types.GoogleSearch()
+                    )],
+                    response_mime_type="application/json"
                 )
-            else:
-                raise e
+            )
         
-        text = response.text.replace("```json", "").replace("```", "").strip()
-        return json.loads(text)
+        # 3. PARSE RESPONSE
+        # v1.0 returns a parsed object if response_mime_type is JSON,
+        # but depending on the exact version, it might still need text parsing.
+        # We'll use response.text to be safe and parse manually.
+        text = response.text
+        
+        # Clean up Markdown if present (sometimes happens even with JSON mode)
+        if "```json" in text:
+            text = text.replace("```json", "").replace("```", "")
+        elif "```" in text:
+             text = text.replace("```", "")
+             
+        return json.loads(text.strip())
         
     except Exception as e:
         st.error(f"Error details: {e}")
@@ -273,5 +284,8 @@ if st.session_state.assessment_data:
     """, unsafe_allow_html=True)
 
     with st.expander("View Trusted Sources Used"):
+        # The new SDK grounding metadata structure is slightly different.
+        # We rely on the model to fill the "sources" key in the JSON output 
+        # as requested in the system prompt.
         for src in data.get("sources", []):
             st.markdown(f"- [{src['name']}]({src['url']}) ({src['date']})")
