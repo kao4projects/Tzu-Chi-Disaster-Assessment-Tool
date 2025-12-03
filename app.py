@@ -1,5 +1,6 @@
 import streamlit as st
 import google.generativeai as genai
+from google.generativeai.types import Tool, GoogleSearchRetrieval
 import json
 import pandas as pd
 
@@ -154,9 +155,6 @@ def calculate_final_metrics(scores_dict):
         "action": action,
         "color": color
     }
-
-# Add this import at the top of your app.py if it's not there
-from google.generativeai.types import Tool, GoogleSearchRetrieval
 
 def fetch_ai_assessment(api_key, query):
     """Calls Gemini API with Google Search Grounding to get real-time data."""
