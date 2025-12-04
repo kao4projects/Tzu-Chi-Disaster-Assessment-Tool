@@ -342,71 +342,44 @@ def robust_json_extractor(text: str):
     """
     Try (very) hard to pull a JSON object out of a model response.
 
-    - Ignores braces inside quoted strings
-    - Finds the first '{' and then walks until braces are balanced
-    - First tries json.loads
-    - Falls back to ast.literal_eval for slightly-broken JSON
+    Strategy:
+    - Strip markdown fences if present.
+    - Take everything from the first '{' to the last '}'.
+    - Try json.loads.
+    - If that fails, normalize null/true/false and try ast.literal_eval.
     Returns: (obj or None, error_message or None)
     """
     if not text:
-        return None, "Response text was empty."
+        return None, "Empty response from model."
 
-    text = str(text).strip()
+    # Always work on a plain string
+    s = str(text).strip()
 
-    # Strip markdown fences if present: ```json ... ```
-    if text.startswith("```"):
-        parts = text.split("```", 2)
+    # --- Strip markdown fences if present ---
+    # e.g. ```json\n{...}\n```  or  ```\n{...}\n```
+    if s.startswith("```"):
+        parts = s.split("```", 2)
         if len(parts) >= 2:
-            text = parts[1].strip()
+            # everything after the first ``` block opener
+            s = parts[1].strip()
 
-    # Find first '{'
-    start = text.find("{")
-    if start == -1:
-        return None, "Could not find '{' in model response."
+    # --- Find first '{' and last '}' ---
+    start = s.find("{")
+    end = s.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return None, "Could not locate JSON object delimiters '{' and '}'."
 
-    s = text[start:]
+    candidate = s[start : end + 1]
 
-    # Find matching closing '}' with brace balancing, ignoring strings
-    depth = 0
-    end_index = None
-    in_string = False
-    escape = False
-
-    for i, ch in enumerate(s):
-        if escape:
-            escape = False
-            continue
-
-        if ch == "\\":
-            # escaped character inside a string
-            escape = True
-            continue
-
-        if ch == '"':
-            in_string = not in_string
-            continue
-
-        if in_string:
-            continue
-
-        if ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                end_index = i
-                break
-
-    if end_index is None:
-        return None, "Could not find a balanced closing '}' in response."
-
-    candidate = s[: end_index + 1]
-
-    # Strict JSON first
+    # --- First attempt: strict JSON ---
     try:
-        return json.loads(candidate), None
+        obj = json.loads(candidate)
+        if isinstance(obj, dict):
+            return obj, None
+        else:
+            return None, f"Top-level JSON is not an object (got {type(obj)})."
     except Exception as e_json:
-        # Fallback: Python literal
+        # --- Fallback: Python literal via ast.literal_eval (more forgiving) ---
         candidate_py = re.sub(r"\bnull\b", "None", candidate)
         candidate_py = re.sub(r"\btrue\b", "True", candidate_py, flags=re.I)
         candidate_py = re.sub(r"\bfalse\b", "False", candidate_py, flags=re.I)
@@ -415,9 +388,11 @@ def robust_json_extractor(text: str):
             obj = ast.literal_eval(candidate_py)
             if isinstance(obj, dict):
                 return obj, None
-            return None, f"ast.literal_eval returned non-dict: {type(obj)}"
-        except Exception as e_py:
-            return None, f"json.loads error: {e_json}; ast.literal_eval error: {e_py}"
+            else:
+                return None, f"ast.literal_eval did not return dict (got {type(obj)})."
+        except Exception as e_ast:
+            return None, f"json.loads error: {repr(e_json)}; ast.literal_eval error: {repr(e_ast)}"
+
 
 
 def fetch_ai_assessment(api_key, query, domains):
