@@ -423,6 +423,7 @@ def fetch_ai_assessment(api_key, query, domains):
                 model="gemini-2.0-flash",
                 contents=full_prompt,
                 config=tool_config,
+                generation_config=types.GenerationConfig(temperature=0.0)
             )
 
         # ---------- Extract URLs ----------
