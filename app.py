@@ -445,18 +445,35 @@ def fetch_ai_assessment(api_key, query, domains):
         if data is None:
             return None, valid_urls, raw_text_debug[:1200]
 
-        # --- Fix In-Need ---
-        try:
-            # Ensure key_figures always has all 4 keys
-            kf = data.get("key_figures") or {}
-            for k in ("affected", "fatalities", "displaced", "in_need"):
-                if k not in kf or not isinstance(kf.get(k), dict):
-                    kf[k] = {"value": "", "date": "", "source": "", "url": ""}
-            data["key_figures"] = kf
+       # --- Normalise key_figures schema (FIX #1) ---
+        kf = data.get("key_figures") or {}
+        for k in ("affected", "fatalities", "displaced", "in_need"):
+            if not isinstance(kf.get(k), dict):
+                kf[k] = {"value": "", "date": "", "source": "", "url": ""}
+        data["key_figures"] = kf
 
-            
-        except Exception:
-            pass
+
+# --- Backfill In-Need from score evidence if missing (FIX #2) ---
+        def first_number(text: str):
+            if not text:
+                return None
+            m = re.search(r"(\d[\d,]*)", str(text))
+            return m.group(1) if m else None
+        
+        in_need_val = (data["key_figures"]["in_need"].get("value") or "").strip().lower()
+        if in_need_val in ("", "no data found", "unknown", "-"):
+            s13 = (data.get("scores") or {}).get("1.3 People in Need", {}) or {}
+            n = first_number(s13.get("extracted_value", ""))
+        
+            if n:
+                srcs = s13.get("source_urls") or valid_urls
+                data["key_figures"]["in_need"] = {
+                    "value": n,
+                    "date": data.get("summary", {}).get("date", "-"),
+                    "source": "Derived from 1.3 People in Need",
+                    "url": srcs[0] if srcs else "#",
+                }
+
 
         return data, valid_urls, raw_text_debug
 
