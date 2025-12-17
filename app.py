@@ -444,17 +444,6 @@ def fetch_ai_assessment(api_key, query, domains):
         if not raw_text_debug:
             return None, valid_urls, "Model returned no text."
 
-        # ---------- Parse JSON ----------
-        data, parse_err = robust_json_extractor(raw_text_debug)
-        if data is None:
-            snippet = raw_text_debug[:1200]
-            debug_msg = (
-                "Could not parse JSON from model.\n\n"
-                f"Parser error: {parse_err}\n\n"
-                "First part of response:\n\n"
-                f"{snippet}"
-            )
-            return None, valid_urls, debug_msg
                     # ---------- Parse JSON ----------
         data, parse_err = robust_json_extractor(raw_text_debug)
         if data is None:
@@ -466,6 +455,34 @@ def fetch_ai_assessment(api_key, query, domains):
                 f"{snippet}"
             )
             return None, valid_urls, debug_msg
+			def needs_in_need_retry(kf):
+    x = (kf.get("in_need") or {}).get("value", "")
+    return (not x) or str(x).strip().lower() in ("no data found", "unknown", "-")
+
+		# after parse success:
+		kf = data.get("key_figures", {}) or {}
+		if needs_in_need_retry(kf):
+		    retry_prompt = (
+		        "Return ONLY this JSON:\n"
+		        '{"in_need": {"value":"…","date":"…","source":"…","url":"…"}}\n\n'
+		        f"Find latest People in Need (PIN) for: {query}\n"
+		        "Search keywords: people in need, humanitarian needs, HRP.\n"
+		        f"Prioritise: reliefweb.int and unocha.org.\n"
+		        "If multiple numbers, pick the latest date and include the direct URL."
+		    )
+		
+		    retry_cfg = types.GenerateContentConfig(
+		        tools=[types.Tool(google_search=types.GoogleSearch())],
+		        temperature=0,
+		        top_p=0.1,
+		    )
+		    r = client.models.generate_content(model="gemini-2.5-flash", contents=retry_prompt, config=retry_cfg)
+		    r_txt = safe_get_response_text(r)
+		    r_obj, _ = robust_json_extractor(r_txt)
+		
+		    if isinstance(r_obj, dict) and isinstance(r_obj.get("in_need"), dict):
+		        data["key_figures"]["in_need"] = r_obj["in_need"]
+
 
         # --- post-process: pick latest key figures if candidates exist ---
         try:
@@ -479,6 +496,35 @@ def fetch_ai_assessment(api_key, query, domains):
             data["key_figures"] = kf
         except Exception:
             pass
+            def _first_number(s: str):
+    if not s:
+        return None
+    m = re.search(r"(\d[\d,\.]*)", str(s))
+    return m.group(1) if m else None
+	
+    # --- post-process: fill in_need from score evidence if missing ---
+	try:
+    kf = data.get("key_figures", {}) or {}
+    in_need = kf.get("in_need") or {}
+    in_need_val = str(in_need.get("value", "")).strip().lower()
+
+    if (not in_need.get("value")) or in_need_val in ("no data found", "unknown", "-"):
+        s13 = data.get("scores", {}).get("1.3 People in Need", {}) or {}
+        extracted = s13.get("extracted_value", "")
+        n = _first_number(extracted)
+
+        if n:
+            src_urls = s13.get("source_urls", []) or []
+            kf["in_need"] = {
+                "value": n,
+                "date": data.get("summary", {}).get("date", "-"),
+                "source": "Derived from score evidence",
+                "url": (src_urls[0] if src_urls else (valid_urls[0] if valid_urls else "#")),
+            }
+            data["key_figures"] = kf
+	except Exception:
+   	 pass
+
 
         return data, valid_urls, raw_text_debug
 
