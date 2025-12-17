@@ -400,15 +400,14 @@ def fetch_ai_assessment(api_key, query, domains):
             f"TARGET SOURCES: {domain_list_str}\n"
             "INSTRUCTION: Find the LATEST data. Use descriptive text to infer scores if numbers are missing."
         )
-        
+
         tool_config = types.GenerateContentConfig(
             tools=[types.Tool(google_search=types.GoogleSearch())],
             temperature=0,
             top_p=0.1,
         )
 
-
-        # --- MODEL CALL (with fallback) ---
+        # --- MODEL CALL ---
         try:
             response = client.models.generate_content(
                 model="gemini-2.5-flash",
@@ -422,63 +421,53 @@ def fetch_ai_assessment(api_key, query, domains):
                 config=tool_config,
             )
 
-        # ---------- Extract URLs ----------
+        # --- URLs ---
         valid_urls = []
         try:
             for cand in getattr(response, "candidates", []) or []:
                 gm = getattr(cand, "grounding_metadata", None)
                 if not gm:
                     continue
-                chunks = getattr(gm, "grounding_chunks", None)
-                if not chunks:
-                    continue
-                for chunk in chunks:
+                for chunk in getattr(gm, "grounding_chunks", []) or []:
                     web = getattr(chunk, "web", None)
                     if web and getattr(web, "uri", None):
                         valid_urls.append(web.uri)
         except Exception:
             pass
 
-        # ---------- Extract text ----------
+        # --- Text ---
         raw_text_debug = safe_get_response_text(response)
         if not raw_text_debug:
             return None, valid_urls, "Model returned no text."
 
-		# ---------- Parse JSON ----------
-		    data, parse_err = robust_json_extractor(raw_text_debug)
-		    if data is None:
-		    snippet = raw_text_debug[:1200]
-		    return None, valid_urls, snippet
+        # --- Parse JSON ---
+        data, parse_err = robust_json_extractor(raw_text_debug)
+        if data is None:
+            return None, valid_urls, raw_text_debug[:1200]
 
-# ---------- Post-process: fix In-Need ----------
-try:
-    kf = data.get("key_figures", {}) or {}
+        # --- Fix In-Need ---
+        try:
+            kf = data.get("key_figures", {}) or {}
+            if needs_in_need_retry(kf):
+                s13 = data.get("scores", {}).get("1.3 People in Need", {}) or {}
+                n = first_number(s13.get("extracted_value", ""))
+                if n:
+                    srcs = s13.get("source_urls", []) or valid_urls
+                    kf["in_need"] = {
+                        "value": n,
+                        "date": data.get("summary", {}).get("date", "-"),
+                        "source": "Derived from assessment evidence",
+                        "url": srcs[0] if srcs else "#",
+                    }
+            data["key_figures"] = kf
+        except Exception:
+            pass
 
-    if needs_in_need_retry(kf):
-        s13 = data.get("scores", {}).get("1.3 People in Need", {}) or {}
-        extracted = s13.get("extracted_value", "")
-        n = first_number(extracted)
-
-        if n:
-            srcs = s13.get("source_urls", []) or valid_urls
-            kf["in_need"] = {
-                "value": n,
-                "date": data.get("summary", {}).get("date", "-"),
-                "source": "Derived from assessment evidence",
-                "url": srcs[0] if srcs else "#",
-            }
-
-    data["key_figures"] = kf
-except Exception:
-    pass
-
-return data, valid_urls, raw_text_debug
-
-
-
+        return data, valid_urls, raw_text_debug
 
     except Exception as e:
         return None, [], f"Exception in fetch_ai_assessment: {repr(e)}"
+
 
 def _cache_key(query, domains):
     raw = query.strip() + "||" + "||".join(sorted([d.strip().lower() for d in domains]))
