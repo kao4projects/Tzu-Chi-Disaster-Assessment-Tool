@@ -455,19 +455,34 @@ def fetch_ai_assessment(api_key, query, domains):
                 f"{snippet}"
             )
             return None, valid_urls, debug_msg
-# --- post-process: pick latest key figures if candidates exist ---
-try:
-    kf = data.get("key_figures", {})
-    for key in ["affected", "fatalities", "displaced", "in_need"]:
-        cand_key = f"{key}_candidates"
-        if cand_key in kf:
-            latest = pick_latest_candidate(kf.get(cand_key))
-            if latest:
-                kf[key] = latest
-    data["key_figures"] = kf
-except Exception:
-    pass
+                    # ---------- Parse JSON ----------
+        data, parse_err = robust_json_extractor(raw_text_debug)
+        if data is None:
+            snippet = raw_text_debug[:1200]
+            debug_msg = (
+                "Could not parse JSON from model.\n\n"
+                f"Parser error: {parse_err}\n\n"
+                "First part of response:\n\n"
+                f"{snippet}"
+            )
+            return None, valid_urls, debug_msg
+
+        # --- post-process: pick latest key figures if candidates exist ---
+        try:
+            kf = data.get("key_figures", {})
+            for key in ["affected", "fatalities", "displaced", "in_need"]:
+                cand_key = f"{key}_candidates"
+                if cand_key in kf:
+                    latest = pick_latest_candidate(kf.get(cand_key))
+                    if latest:
+                        kf[key] = latest
+            data["key_figures"] = kf
+        except Exception:
+            pass
+
         return data, valid_urls, raw_text_debug
+
+
 
     except Exception as e:
         return None, [], f"Exception in fetch_ai_assessment: {repr(e)}"
