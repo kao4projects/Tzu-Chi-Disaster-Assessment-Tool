@@ -405,8 +405,6 @@ def fetch_ai_assessment(api_key, query, domains):
             tools=[types.Tool(google_search=types.GoogleSearch())],
             temperature=0,
             top_p=0.1,
-    # 如果你的 SDK 支援，建議再加：
-    # response_mime_type="application/json",
         )
 
 
