@@ -445,8 +445,8 @@ def fetch_ai_assessment(api_key, query, domains):
             return None, valid_urls, "Model returned no text."
 
 # ---------- Parse JSON ----------
-data, parse_err = robust_json_extractor(raw_text_debug)
-if data is None:
+    data, parse_err = robust_json_extractor(raw_text_debug)
+    if data is None:
     snippet = raw_text_debug[:1200]
     return None, valid_urls, snippet
 
