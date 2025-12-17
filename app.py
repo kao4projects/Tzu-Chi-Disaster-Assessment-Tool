@@ -455,9 +455,9 @@ def fetch_ai_assessment(api_key, query, domains):
                 f"{snippet}"
             )
             return None, valid_urls, debug_msg
-			def needs_in_need_retry(kf):
-    x = (kf.get("in_need") or {}).get("value", "")
-    return (not x) or str(x).strip().lower() in ("no data found", "unknown", "-")
+		def needs_in_need_retry(kf):
+		x = (kf.get("in_need") or {}).get("value", "")
+		return (not x) or str(x).strip().lower() in ("no data found", "unknown", "-")
 
 		# after parse success:
 		kf = data.get("key_figures", {}) or {}
