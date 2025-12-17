@@ -447,19 +447,14 @@ def fetch_ai_assessment(api_key, query, domains):
 
         # --- Fix In-Need ---
         try:
-            kf = data.get("key_figures", {}) or {}
-            if needs_in_need_retry(kf):
-                s13 = data.get("scores", {}).get("1.3 People in Need", {}) or {}
-                n = first_number(s13.get("extracted_value", ""))
-                if n:
-                    srcs = s13.get("source_urls", []) or valid_urls
-                    kf["in_need"] = {
-                        "value": n,
-                        "date": data.get("summary", {}).get("date", "-"),
-                        "source": "Derived from assessment evidence",
-                        "url": srcs[0] if srcs else "#",
-                    }
+            # Ensure key_figures always has all 4 keys
+            kf = data.get("key_figures") or {}
+            for k in ("affected", "fatalities", "displaced", "in_need"):
+                if k not in kf or not isinstance(kf.get(k), dict):
+                    kf[k] = {"value": "", "date": "", "source": "", "url": ""}
             data["key_figures"] = kf
+
+            
         except Exception:
             pass
 
