@@ -401,7 +401,7 @@ def fetch_ai_assessment(api_key, query, domains):
             "INSTRUCTION: Find the LATEST data. Use descriptive text to infer scores if numbers are missing."
         )
         
-         tool_config = types.GenerateContentConfig(
+        tool_config = types.GenerateContentConfig(
             tools=[types.Tool(google_search=types.GoogleSearch())],
             temperature=0,
             top_p=0.1,
