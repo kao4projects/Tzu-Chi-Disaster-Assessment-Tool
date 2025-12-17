@@ -4,6 +4,8 @@ from google import genai
 from google.genai import types
 import json
 import re
+import hashlib
+from datetime import datetime, timezone
 
 # --- 1. CONFIGURATION ---
 st.set_page_config(page_title="Tzu Chi Disaster Tool", layout="wide")
@@ -339,60 +341,52 @@ def safe_get_response_text(response):
     return None
 
 def robust_json_extractor(text: str):
-    """
-    Try (very) hard to pull a JSON object out of a model response.
-
-    Strategy:
-    - Strip markdown fences if present.
-    - Take everything from the first '{' to the last '}'.
-    - Try json.loads.
-    - If that fails, normalize null/true/false and try ast.literal_eval.
-    Returns: (obj or None, error_message or None)
-    """
     if not text:
         return None, "Empty response from model."
 
-    # Always work on a plain string
     s = str(text).strip()
 
-    # --- Strip markdown fences if present ---
-    # e.g. ```json\n{...}\n```  or  ```\n{...}\n```
+    # Strip fenced code block
     if s.startswith("```"):
-        parts = s.split("```", 2)
-        if len(parts) >= 2:
-            # everything after the first ``` block opener
-            s = parts[1].strip()
+        # remove leading ``` and trailing ```
+        s = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", s)
+        s = re.sub(r"\s*```$", "", s).strip()
 
-    # --- Find first '{' and last '}' ---
     start = s.find("{")
     end = s.rfind("}")
     if start == -1 or end == -1 or end <= start:
         return None, "Could not locate JSON object delimiters '{' and '}'."
 
-    candidate = s[start : end + 1]
+    candidate = s[start:end+1]
 
-    # --- First attempt: strict JSON ---
     try:
         obj = json.loads(candidate)
         if isinstance(obj, dict):
             return obj, None
-        else:
-            return None, f"Top-level JSON is not an object (got {type(obj)})."
+        return None, f"Top-level JSON is not an object (got {type(obj)})."
     except Exception as e_json:
-        # --- Fallback: Python literal via ast.literal_eval (more forgiving) ---
+        # fallback
         candidate_py = re.sub(r"\bnull\b", "None", candidate)
         candidate_py = re.sub(r"\btrue\b", "True", candidate_py, flags=re.I)
         candidate_py = re.sub(r"\bfalse\b", "False", candidate_py, flags=re.I)
-
         try:
             obj = ast.literal_eval(candidate_py)
             if isinstance(obj, dict):
                 return obj, None
-            else:
-                return None, f"ast.literal_eval did not return dict (got {type(obj)})."
+            return None, f"ast.literal_eval did not return dict (got {type(obj)})."
         except Exception as e_ast:
             return None, f"json.loads error: {repr(e_json)}; ast.literal_eval error: {repr(e_ast)}"
 
+def _parse_date_safe(s):
+    try:
+        return datetime.strptime(str(s), "%Y-%m-%d")
+    except Exception:
+        return datetime.min
+
+def pick_latest_candidate(candidates):
+    if not isinstance(candidates, list) or not candidates:
+        return None
+    return max(candidates, key=lambda x: _parse_date_safe(x.get("date")))
 
 
 def fetch_ai_assessment(api_key, query, domains):
@@ -407,9 +401,14 @@ def fetch_ai_assessment(api_key, query, domains):
             "INSTRUCTION: Find the LATEST data. Use descriptive text to infer scores if numbers are missing."
         )
 
-        tool_config = types.GenerateContentConfig(
-            tools=[types.Tool(google_search=types.GoogleSearch())],
-        )
+tool_config = types.GenerateContentConfig(
+    tools=[types.Tool(google_search=types.GoogleSearch())],
+    temperature=0,
+    top_p=0.1,
+    # 如果你的 SDK 支援，建議再加：
+    # response_mime_type="application/json",
+      )
+
 
         # --- MODEL CALL (with fallback) ---
         try:
@@ -458,11 +457,30 @@ def fetch_ai_assessment(api_key, query, domains):
                 f"{snippet}"
             )
             return None, valid_urls, debug_msg
-
+# --- post-process: pick latest key figures if candidates exist ---
+try:
+    kf = data.get("key_figures", {})
+    for key in ["affected", "fatalities", "displaced", "in_need"]:
+        cand_key = f"{key}_candidates"
+        if cand_key in kf:
+            latest = pick_latest_candidate(kf.get(cand_key))
+            if latest:
+                kf[key] = latest
+    data["key_figures"] = kf
+except Exception:
+    pass
         return data, valid_urls, raw_text_debug
 
     except Exception as e:
         return None, [], f"Exception in fetch_ai_assessment: {repr(e)}"
+
+def _cache_key(query, domains):
+    raw = query.strip() + "||" + "||".join(sorted([d.strip().lower() for d in domains]))
+    return hashlib.md5(raw.encode("utf-8")).hexdigest()
+
+@st.cache_data(ttl=6*3600, show_spinner=False)  # 6 hours, 可自行調整
+def fetch_ai_assessment_cached(api_key, query, domains):
+    return fetch_ai_assessment(api_key, query, domains)
 
 
 # --- 7. UI RENDER ---
@@ -482,7 +500,7 @@ if "raw_debug" not in st.session_state:
 
 if run_btn and query:
     with st.spinner("🔍 Researching Sources & Scoring against Rubric..."):
-        data, urls, raw_debug = fetch_ai_assessment(api_key, query, selected_domains)
+        data, urls, raw_debug = fetch_ai_assessment_cached(api_key, query, selected_domains)
 
         st.session_state.raw_debug = raw_debug
         st.session_state.valid_urls = urls or []
